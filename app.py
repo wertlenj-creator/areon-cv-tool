@@ -19,8 +19,11 @@ def extract_text_from_pdf(uploaded_file):
     return text
 
 def get_ai_data_direct(cv_text, user_notes):
-    # Použijeme gemini-1.5-flash (Na platenom účte je to super rýchle a lacné)
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}"
+    # POUŽIJEME MODEL, KTORÝ TVOJ ÚČET POZNÁ (Podľa diagnostiky)
+    # Ak máš platený účet, tento model nebude hádzať 429.
+    model_name = "gemini-flash-latest"
+    
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={API_KEY}"
     headers = {"Content-Type": "application/json"}
 
     system_instruction = """
@@ -81,6 +84,8 @@ def generate_word(data, template_file):
 
 # --- UI ---
 st.title("Generátor DE Profilov 🇩🇪")
+st.caption(f"Verzia: Gemini Flash Latest (Paid/High Limit)")
+
 col1, col2 = st.columns(2)
 with col1:
     uploaded_file = st.file_uploader("Nahraj PDF", type=["pdf"])
