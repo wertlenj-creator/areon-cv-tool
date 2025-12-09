@@ -2,7 +2,7 @@ import streamlit as st
 import requests
 import json
 import io
-from docxtpl import DocxTemplate, RichText
+from docxtpl import DocxTemplate
 from pypdf import PdfReader
 
 # --- CONFIG ---
@@ -19,7 +19,6 @@ def extract_text_from_pdf(uploaded_file):
     return text
 
 def get_ai_data_openai(cv_text, user_notes):
-    # Použijeme gpt-4o-mini (Najlepší pomer cena/výkon pre tento účel)
     url = "https://api.openai.com/v1/chat/completions"
     
     headers = {
@@ -77,13 +76,12 @@ def get_ai_data_openai(cv_text, user_notes):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Poznámky: {user_notes}\nCV Text:\n{cv_text}"}
         ],
-        "response_format": {"type": "json_object"}, # Zaručí bezchybný JSON
+        "response_format": {"type": "json_object"},
         "temperature": 0.2
     }
 
     try:
         response = requests.post(url, headers=headers, data=json.dumps(payload))
-        
         if response.status_code != 200:
             st.error(f"❌ Chyba OpenAI ({response.status_code}): {response.text}")
             return None
@@ -91,19 +89,8 @@ def get_ai_data_openai(cv_text, user_notes):
         result = response.json()
         content = result['choices'][0]['message']['content']
         data = json.loads(content)
-
-        # --- PRÍPRAVA PRE WORD (TABULÁTORY) ---
-        # Aby to sedelo s tvojím nastavením "Hanging Indent" vo Worde
-        if "experience" in data:
-            for job in data["experience"]:
-                full_text = ""
-                if "details" in job and isinstance(job["details"], list):
-                    for item in job["details"]:
-                        clean_item = str(item).strip()
-                        # Odrážka + Tabulátor (Word to zarovná podľa pravítka)
-                        full_text += f"•\t{clean_item}\n"
-                job["details_flat"] = RichText(full_text.rstrip())
         
+        # Tu už nerobíme žiadne "RichText" úpravy, necháme to na Word
         return data
 
     except Exception as e:
@@ -120,8 +107,6 @@ def generate_word(data, template_file):
 
 # --- UI ---
 st.title("Generátor DE Profilov 🇩🇪")
-st.caption("Verzia: OpenAI GPT-4o Mini (Stable)")
-
 col1, col2 = st.columns(2)
 with col1:
     uploaded_file = st.file_uploader("Nahraj PDF", type=["pdf"])
@@ -130,9 +115,9 @@ with col2:
 
 if uploaded_file and st.button("🚀 Vygenerovať", type="primary"):
     if not API_KEY:
-        st.error("Chýba API kľúč! Nastav 'OPENAI_API_KEY' v Secrets.")
+        st.error("Chýba OPENAI_API_KEY v Secrets!")
     else:
-        with st.spinner("OpenAI pracuje..."):
+        with st.spinner("Generujem..."):
             text = extract_text_from_pdf(uploaded_file)
             data = get_ai_data_openai(text, notes)
             
