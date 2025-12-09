@@ -22,11 +22,12 @@ def extract_text_from_pdf(uploaded_file):
     return text
 
 def get_ai_data_robust(cv_text, user_notes):
-    # ZMENA PORADIA: Na prvé miesto dávame model s najväčším limitom zadarmo
+    # ZMENA: Na prvé miesto dávame gemini-1.5-flash.
+    # Vďaka aktualizovanej knižnici už nebude hádzať chybu 404.
+    # Tento model má obrovské limity zadarmo.
     candidate_models = [
-        "gemini-1.5-flash",       # Kráľ Free Tieru (1500 RPM) - už nebude 404 lebo máme novú lib
+        "gemini-1.5-flash",       # Kráľ Free Tieru (1500 žiadostí denne)
         "gemini-1.5-flash-latest",
-        "gemini-1.5-flash-001",
         "gemini-1.5-pro",
         "gemini-pro"              # Stará záloha
     ]
@@ -87,13 +88,14 @@ def get_ai_data_robust(cv_text, user_notes):
             clean_json = response.text.replace("```json", "").replace("```", "").strip()
             data = json.loads(clean_json)
 
-            # RichText úprava pre Word
+            # RichText úprava pre Word (aby neboli medzery navyše)
             if "experience" in data:
                 for job in data["experience"]:
                     full_text = ""
                     if "details" in job and isinstance(job["details"], list):
                         for item in job["details"]:
                             clean_item = str(item).strip()
+                            # 6 medzier simuluje odsadenie, 'o' je odrážka
                             full_text += f"      o  {clean_item}\n"
                     job["details_flat"] = RichText(full_text.rstrip())
             
@@ -101,17 +103,19 @@ def get_ai_data_robust(cv_text, user_notes):
 
         except Exception as e:
             error_msg = str(e)
+            # Ak je preťažený (429), skúsime ďalší
             if "429" in error_msg:
-                st.warning(f"⚠️ Model {model_name} je vyčerpaný. Skúšam ďalší...")
+                st.warning(f"⚠️ Model {model_name} je vyčerpaný. Prepínam na ďalší...")
                 time.sleep(1)
                 continue
+            # Ak neexistuje (404), ideme ďalej ticho
             elif "404" in error_msg:
                 continue
             else:
                 st.error(f"Chyba pri modeli {model_name}: {e}")
                 return None
 
-    st.error("❌ Všetky modely sú momentálne vyťažené. Skús to o hodinu alebo použi nový API kľúč.")
+    st.error("❌ Všetky modely sú momentálne vyťažené. Ak sa to opakuje, vytvor si nový API kľúč v Google AI Studio.")
     return None
 
 def generate_word(data, template_file):
