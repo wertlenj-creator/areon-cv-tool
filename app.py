@@ -2,7 +2,8 @@ import streamlit as st
 import requests
 import json
 import io
-from docxtpl import DocxTemplate
+import zipfile  # <--- Nová knižnica pre balenie do ZIP
+from docxtpl import DocxTemplate, RichText
 from pypdf import PdfReader
 
 # --- CONFIG ---
@@ -20,7 +21,6 @@ def extract_text_from_pdf(uploaded_file):
 
 def get_ai_data_openai(cv_text, user_notes):
     url = "https://api.openai.com/v1/chat/completions"
-    
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {API_KEY}"
@@ -89,8 +89,6 @@ def get_ai_data_openai(cv_text, user_notes):
         result = response.json()
         content = result['choices'][0]['message']['content']
         data = json.loads(content)
-        
-        # Tu už nerobíme žiadne "RichText" úpravy, necháme to na Word
         return data
 
     except Exception as e:
@@ -107,25 +105,80 @@ def generate_word(data, template_file):
 
 # --- UI ---
 st.title("Generátor DE Profilov 🇩🇪")
+st.caption("Verzia: Hromadný ZIP Export (OpenAI)")
+
 col1, col2 = st.columns(2)
 with col1:
-    uploaded_file = st.file_uploader("Nahraj PDF", type=["pdf"])
-with col2:
-    notes = st.text_area("Poznámky")
+    uploaded_files = st.file_uploader("Nahraj PDF (jedno alebo viac)", type=["pdf"], accept_multiple_files=True)
 
-if uploaded_file and st.button("🚀 Vygenerovať", type="primary"):
+with col2:
+    notes = st.text_area("Spoločné poznámky")
+
+if uploaded_files and st.button(f"🚀 Vygenerovať balík ({len(uploaded_files)} profilov)", type="primary"):
     if not API_KEY:
         st.error("Chýba OPENAI_API_KEY v Secrets!")
     else:
-        with st.spinner("Generujem..."):
-            text = extract_text_from_pdf(uploaded_file)
-            data = get_ai_data_openai(text, notes)
+        # Pripravíme si ZIP pamäť
+        zip_buffer = io.BytesIO()
+        
+        # Ukazovateľ postupu (Progress bar)
+        progress_text = "Spracovávam životopisy..."
+        my_bar = st.progress(0, text=progress_text)
+        
+        success_count = 0
+        
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
             
-            if data:
+            for i, pdf_file in enumerate(uploaded_files):
+                # Aktualizácia progress baru
+                my_bar.progress((i) / len(uploaded_files), text=f"Spracovávam: {pdf_file.name}")
+                
                 try:
-                    doc = generate_word(data, "template.docx")
-                    st.success("Hotovo!")
-                    safe_name = data.get('personal', {}).get('name', 'Kandidat').replace(' ', '_')
-                    st.download_button("📥 Stiahnuť Word", doc, f"Profil_{safe_name}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                    # 1. Extrakcia
+                    text = extract_text_from_pdf(pdf_file)
+                    
+                    # 2. AI Spracovanie
+                    data = get_ai_data_openai(text, notes)
+                    
+                    if data:
+                        # 3. RichText / Word formátovanie
+                        if "experience" in data:
+                            for job in data["experience"]:
+                                full_text = ""
+                                if "details" in job and isinstance(job["details"], list):
+                                    for item in job["details"]:
+                                        clean_item = str(item).strip()
+                                        full_text += f"•\t{clean_item}\n"
+                                job["details_flat"] = RichText(full_text.rstrip())
+
+                        # 4. Generovanie Wordu
+                        doc_io = generate_word(data, "template.docx")
+                        
+                        # 5. Pridanie do ZIPu
+                        safe_name = data.get('personal', {}).get('name', 'Kandidat').replace(' ', '_')
+                        file_name_in_zip = f"Profil_{safe_name}.docx"
+                        
+                        # Pozor: ZipFile potrebuje 'bytes', nie 'BytesIO', preto .getvalue()
+                        zf.writestr(file_name_in_zip, doc_io.getvalue())
+                        
+                        success_count += 1
+                        st.write(f"✅ {safe_name} - Pripravený")
+                    else:
+                        st.error(f"❌ {pdf_file.name} - Chyba pri spracovaní")
+                        
                 except Exception as e:
-                    st.error(f"Chyba Wordu: {e}")
+                    st.error(f"❌ Kritická chyba pri {pdf_file.name}: {e}")
+
+        # Hotovo
+        my_bar.progress(100, text="Hotovo!")
+        
+        if success_count > 0:
+            st.success(f"Úspešne spracovaných {success_count} z {len(uploaded_files)} profilov.")
+            
+            # Jedno tlačidlo na stiahnutie ZIPu
+            st.download_button(
+                label="📦 Stiahnuť všetky profily (ZIP)",
+                data=zip_buffer.getvalue(),
+                file_name="Areon_Profily.zip",
+                mime="application/zip"
+            )
