@@ -8,8 +8,8 @@ from pypdf import PdfReader
 # --- CONFIG ---
 st.set_page_config(page_title="Areon CV Generator", page_icon="📄")
 
-# Načítame OpenAI kľúč zo Secrets
-API_KEY = st.secrets.get("OPENAI_API_KEY", "")
+# Načítanie API kľúča
+API_KEY = st.secrets.get("GOOGLE_API_KEY", "")
 
 def extract_text_from_pdf(uploaded_file):
     reader = PdfReader(uploaded_file)
@@ -18,18 +18,21 @@ def extract_text_from_pdf(uploaded_file):
         text += page.extract_text() + "\n"
     return text
 
-def get_data_from_openai(cv_text, user_notes):
-    # Použijeme model gpt-4o-mini (lacný, rýchly, inteligentný)
-    url = "https://api.openai.com/v1/chat/completions"
+def get_ai_data_direct(cv_text, user_notes):
+    """
+    Funkcia volá Google Gemini (1.5 Flash) priamo cez REST API.
+    Obchádza problémy s knižnicou a generuje formátovanie pre Word s Tabulátormi.
+    """
     
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {API_KEY}"
-    }
+    # Použijeme gemini-1.5-flash (Najlepšie limity pre Free verziu)
+    model_name = "gemini-1.5-flash"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={API_KEY}"
+    
+    headers = {"Content-Type": "application/json"}
 
-    system_prompt = """
-    Správaš sa ako senior HR špecialista pre Areon. Tvojou úlohou je extrahovať dáta z CV do nemeckého profilu.
-    Odpovedaj IBA v JSON formáte.
+    system_instruction = """
+    Správaš sa ako senior HR špecialista pre Areon. Priprav dáta pre nemecký profil kandidáta.
+    VÝSTUP MUSÍ BYŤ LEN ČISTÝ JSON (bez ```json značiek).
     
     PRAVIDLÁ:
     1. Jazyk výstupu: Nemčina (Business German).
@@ -70,36 +73,52 @@ def get_data_from_openai(cv_text, user_notes):
         "skills": ["Skill 1", "Skill 2"]
     }
     """
+    
+    final_prompt = f"{system_instruction}\nPoznámky: {user_notes}\nCV Text:\n{cv_text}"
 
     payload = {
-        "model": "gpt-4o-mini",
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Poznámky: {user_notes}\nCV Text:\n{cv_text}"}
-        ],
-        "response_format": {"type": "json_object"}, # Toto zaručí, že sa JSON nerozbije
-        "temperature": 0.2
+        "contents": [{"parts": [{"text": final_prompt}]}]
     }
 
     try:
+        # Odoslanie požiadavky na Google
         response = requests.post(url, headers=headers, data=json.dumps(payload))
         
+        # Ak zlyhá 1.5-flash (napr. 404), skúsime záložný starší model gemini-pro
         if response.status_code != 200:
-            st.error(f"Chyba OpenAI ({response.status_code}): {response.text}")
+            # st.warning(f"Primárny model neodpovedá ({response.status_code}), skúšam záložný...")
+            url_backup = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={API_KEY}"
+            response = requests.post(url_backup, headers=headers, data=json.dumps(payload))
+            
+            if response.status_code != 200:
+                st.error(f"❌ Chyba Google ({response.status_code}): {response.text}")
+                return None
+
+        result_json = response.json()
+        
+        # Bezpečné získanie textu
+        try:
+            raw_text = result_json['candidates'][0]['content']['parts'][0]['text']
+        except (KeyError, IndexError):
+            st.error("Google vrátil prázdnu odpoveď (Safety Block).")
             return None
 
-        result = response.json()
-        content = result['choices'][0]['message']['content']
-        data = json.loads(content)
+        clean_json = raw_text.replace("```json", "").replace("```", "").strip()
+        data = json.loads(clean_json)
 
-        # --- PRÍPRAVA PRE WORD (RichText) ---
+        # --- PRÍPRAVA PRE WORD (ZMENA ODRÁŽOK NA TABULÁTORY) ---
         if "experience" in data:
             for job in data["experience"]:
                 full_text = ""
                 if "details" in job and isinstance(job["details"], list):
                     for item in job["details"]:
                         clean_item = str(item).strip()
-                        full_text += f"      o  {clean_item}\n"
+                        # TOTO JE TÁ ZMENA:
+                        # • = Odrážka
+                        # \t = Tabulátor (skočí na značku v pravítku)
+                        full_text += f"•\t{clean_item}\n"
+                
+                # RichText zabezpečí, že Word pochopí špeciálne znaky
                 job["details_flat"] = RichText(full_text.rstrip())
         
         return data
@@ -116,29 +135,34 @@ def generate_word(data, template_file):
     bio.seek(0)
     return bio
 
-# --- UI ---
+# --- UI APLIKÁCIE ---
 st.title("Generátor DE Profilov 🇩🇪")
-st.caption("Powered by OpenAI GPT-4o")
+st.caption("Verzia: Direct API + Tabulátory")
 
 col1, col2 = st.columns(2)
 with col1:
     uploaded_file = st.file_uploader("Nahraj PDF", type=["pdf"])
 with col2:
-    notes = st.text_area("Poznámky")
+    notes = st.text_area("Poznámky", placeholder="Doplňujúce info...")
 
 if uploaded_file and st.button("🚀 Vygenerovať", type="primary"):
     if not API_KEY:
-        st.error("Chýba OPENAI_API_KEY v Secrets!")
+        st.error("Chýba API kľúč!")
     else:
-        with st.spinner("OpenAI pracuje..."):
+        with st.spinner("Pracujem..."):
             text = extract_text_from_pdf(uploaded_file)
-            data = get_data_from_openai(text, notes)
+            data = get_ai_data_direct(text, notes)
             
             if data:
                 try:
                     doc = generate_word(data, "template.docx")
                     st.success("Hotovo!")
                     safe_name = data.get('personal', {}).get('name', 'Kandidat').replace(' ', '_')
-                    st.download_button("📥 Stiahnuť Word", doc, f"Profil_{safe_name}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                    st.download_button(
+                        label="📥 Stiahnuť Word", 
+                        data=doc, 
+                        file_name=f"Profil_{safe_name}.docx", 
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    )
                 except Exception as e:
-                    st.error(f"Chyba Wordu: {e}")
+                    st.error(f"Chyba pri tvorbe Wordu: {e}")
