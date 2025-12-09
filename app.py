@@ -33,20 +33,24 @@ def encode_image(uploaded_file):
     return base64.b64encode(uploaded_file.getvalue()).decode('utf-8')
 
 def get_ai_data_openai(content, user_notes, is_image=False, mime_type="image/jpeg"):
-    """
-    Univerzálna funkcia: Zvládne Text (z PDF) aj Obrázok (z JPG/PNG).
-    """
     url = "https://api.openai.com/v1/chat/completions"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {API_KEY}"
     }
 
+    # --- TUTO JE KĽÚČOVÁ ZMENA V INŠTRUKCIÁCH ---
     system_prompt = """
     Správaš sa ako senior HR špecialista pre Areon. Tvojou úlohou je extrahovať dáta z CV do nemeckého profilu.
     Odpovedaj IBA v JSON formáte.
     
-    PRAVIDLÁ:
+    ❗️ KRITICKÉ PRAVIDLO RADENIA:
+    Ignoruj poradie v pôvodnom súbore!
+    V poliach "experience" a "education" MUSIA byť položky zoradené REVERZNE CHRONOLOGICKY.
+    1. PRVÁ položka v zozname musí byť tá NAJAKTUÁLNEJŠIA (napr. 2024 alebo Heute).
+    2. POSLEDNÁ položka musí byť tá najstaršia (napr. 2005).
+    
+    ĎALŠIE PRAVIDLÁ:
     1. Jazyk výstupu: Nemčina (Business German).
     2. Školy/Odbory: Prelož do nemčiny.
     3. Firmy: Nechaj originál.
@@ -56,7 +60,6 @@ def get_ai_data_openai(content, user_notes, is_image=False, mime_type="image/jpe
        - "details" v experience musí byť ZOZNAM (Array) stringov.
        - "languages" musí byť ZOZNAM (Array) stringov.
        - "skills" musí byť ZOZNAM (Array) stringov.
-    7. RADENIE (Dôležité): Vzdelanie (education) aj Skúsenosti (experience) musia byť zoradené od NAJNOVŠIEHO po najstaršie (Reverse Chronological).
     
     JSON ŠTRUKTÚRA:
     {
@@ -67,14 +70,18 @@ def get_ai_data_openai(content, user_notes, is_image=False, mime_type="image/jpe
             "gender": "Mann ♂ / Frau ♀"
         },
         "experience": [
+            // TU DAJ NAJAKTUÁLNEJŠIU PRÁCU (2024...) AKO PRVÚ!
             {
                 "title": "Pozícia (DE)",
                 "company": "Firma",
                 "period": "MM/YYYY - MM/YYYY",
                 "details": ["Bod 1", "Bod 2", "Bod 3"]
-            }
+            },
+            // STARŠIE PRÁCE NASLEDUJÚ...
         ],
         "education": [
+             // TU DAJ NAJAKTUÁLNEJŠIU ŠKOLU (2008...) AKO PRVÚ!
+             // Základnú školu daj až na úplný koniec.
              {
                 "school": "Škola (DE)",
                 "specialization": "Odbor (DE)",
@@ -90,7 +97,6 @@ def get_ai_data_openai(content, user_notes, is_image=False, mime_type="image/jpe
     # --- PRÍPRAVA SPRÁVY PRE AI ---
     user_message_content = []
 
-    # 1. Pridáme inštrukcie a poznámky
     text_instruction = f"Poznámky recruitera: {user_notes}\n"
     if not is_image:
         text_instruction += f"\nCV Text:\n{content}"
@@ -99,18 +105,17 @@ def get_ai_data_openai(content, user_notes, is_image=False, mime_type="image/jpe
 
     user_message_content.append({"type": "text", "text": text_instruction})
 
-    # 2. Ak je to obrázok, pridáme ho do správy
     if is_image:
         user_message_content.append({
             "type": "image_url",
             "image_url": {
                 "url": f"data:{mime_type};base64,{content}",
-                "detail": "high" # Aby AI čítala aj malé písmenká
+                "detail": "high"
             }
         })
 
     payload = {
-        "model": "gpt-4o-mini", # Tento model má "oči" (Vision)
+        "model": "gpt-4o-mini",
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message_content}
@@ -155,11 +160,10 @@ def generate_word(data, template_file):
 
 # --- UI APLIKÁCIE ---
 st.title("Generátor DE Profilov 🇩🇪")
-st.caption("Verzia: PDF + Obrázky (Vision) + Zoradenie")
+st.caption("Verzia: PDF + Obrázky + Zoradenie (Fix)")
 
 col1, col2 = st.columns(2)
 with col1:
-    # ZMENA: Povolili sme aj obrázky
     uploaded_files = st.file_uploader(
         "Nahraj súbory (PDF, JPG, PNG)", 
         type=["pdf", "jpg", "jpeg", "png"], 
@@ -169,70 +173,51 @@ with col1:
 with col2:
     notes = st.text_area("Spoločné poznámky")
 
-# --- LOGIKA SPRACOVANIA ---
 if uploaded_files:
-    
-    # Rozhodneme či tlačidlo pre jeden alebo pre balík
     btn_text = "🚀 Vygenerovať profil" if len(uploaded_files) == 1 else f"🚀 Vygenerovať balík ({len(uploaded_files)})"
     
     if st.button(btn_text, type="primary"):
         if not API_KEY:
             st.error("Chýba OPENAI_API_KEY!")
         else:
-            # Príprava pre ZIP (ak bude viac súborov)
             zip_buffer = io.BytesIO()
-            results = [] # Tu si uložíme úspešné dokumenty
-            
-            # Progress bar
+            results = []
             my_bar = st.progress(0, text="Začínam...")
 
-            # --- CYKLUS CEZ SÚBORY ---
             with zipfile.ZipFile(zip_buffer, "w") as zf:
                 for i, file in enumerate(uploaded_files):
                     my_bar.progress((i) / len(uploaded_files), text=f"Spracovávam: {file.name}")
                     
                     try:
                         data = None
-                        
-                        # A. Ak je to PDF
                         if file.type == "application/pdf":
                             text = extract_text_from_pdf(file)
-                            # Ak je PDF prázdne (sken), skúsime ho poslať ako obrázok? 
                             if not text.strip():
-                                st.warning(f"⚠️ PDF {file.name} vyzerá ako obrázok/sken. Ak výsledok nebude dobrý, skonvertuj ho na JPG.")
-                            
+                                st.warning(f"⚠️ PDF {file.name} je asi sken. Skús JPG.")
                             data = get_ai_data_openai(text, notes, is_image=False)
                         
-                        # B. Ak je to OBRÁZOK (JPG, PNG)
                         elif file.type in ["image/jpeg", "image/png", "image/jpg"]:
-                            # Zakódujeme obrázok do base64
                             base64_img = encode_image(file)
                             data = get_ai_data_openai(base64_img, notes, is_image=True, mime_type=file.type)
                         
-                        # C. Spracovanie výsledku
                         if data:
                             doc_io = generate_word(data, "template.docx")
                             safe_name = data.get('personal', {}).get('name', 'Kandidat').replace(' ', '_')
                             filename_docx = f"Profil_{safe_name}.docx"
                             
-                            # Uložíme do ZIPu
                             zf.writestr(filename_docx, doc_io.getvalue())
-                            
-                            # Uložíme si info pre single download
                             results.append({"name": filename_docx, "data": doc_io.getvalue()})
                             
                             st.write(f"✅ {safe_name}")
                         else:
-                            st.error(f"❌ Chyba pri spracovaní {file.name}")
+                            st.error(f"❌ Chyba pri {file.name}")
 
                     except Exception as e:
-                        st.error(f"❌ Kritická chyba pri {file.name}: {e}")
+                        st.error(f"❌ Chyba: {e}")
 
             my_bar.progress(100, text="Hotovo!")
 
-            # --- VÝSTUP (JEDEN vs VIAC) ---
             if len(results) > 0:
-                # Ak bol len 1 súbor, ponúkneme priame stiahnutie .docx
                 if len(uploaded_files) == 1:
                     st.download_button(
                         label="📥 Stiahnuť Word (.docx)",
@@ -240,7 +225,6 @@ if uploaded_files:
                         file_name=results[0]["name"],
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                     )
-                # Ak bolo viac, ponúkneme ZIP
                 else:
                     st.success(f"Spracovaných {len(results)} súborov.")
                     st.download_button(
