@@ -24,19 +24,17 @@ def extract_text_from_pdf(uploaded_file):
 
 def get_ai_data_robust(cv_text, user_notes):
     """
-    Táto funkcia skúša rad za radom rôzne modely, kým nenájde funkčný.
+    Skúša rad za radom rôzne modely podľa toho, čo je dostupné.
+    Zoznam je zoradený podľa tvojej diagnostiky.
     """
     
-    # ZOZNAM MODELOV (Od najlepšieho po záložné)
-    # 1. gemini-1.5-flash (Ideál - zadarmo a rýchly)
-    # 2. gemini-1.5-flash-001 (Konkrétna verzia, ak alias nefunguje)
-    # 3. gemini-flash-latest (Tvoj 2.5 Flash - funguje, ale má limity)
-    # 4. gemini-pro (Starý spoľahlivý model)
+    # ZOZNAM MODELOV (Priorita podľa tvojej diagnostiky)
     candidate_models = [
-        "gemini-1.5-flash",
-        "gemini-1.5-flash-001",
-        "gemini-flash-latest",
-        "gemini-pro"
+        "gemini-2.0-flash",        # Nový, rýchly model (bol v tvojom zozname)
+        "gemini-2.0-flash-exp",    # Záloha pre verziu 2.0
+        "gemini-1.5-pro-latest",   # Silný Pro model
+        "gemini-flash-latest",     # (Tento hádzal limit, je až ako 4. možnosť)
+        "gemini-pro"               # Stará klasika (istota)
     ]
 
     system_prompt = """
@@ -91,7 +89,7 @@ def get_ai_data_robust(cv_text, user_notes):
     # --- HLAVNÁ SLUČKA (Skúšame modely) ---
     for model_name in candidate_models:
         try:
-            # st.write(f"🔧 Skúšam model: {model_name}...") # Debug výpis (voliteľné)
+            # st.write(f"🔧 Skúšam model: {model_name}...") # Debug (odkomentuj ak chceš vidieť proces)
             model = genai.GenerativeModel(model_name)
             
             # Skúsime vygenerovať obsah
@@ -101,37 +99,40 @@ def get_ai_data_robust(cv_text, user_notes):
             clean_json = response.text.replace("```json", "").replace("```", "").strip()
             data = json.loads(clean_json)
 
-            # --- PRÍPRAVA TEXTU PRE WORD (RichText) ---
+            # --- PRÍPRAVA TEXTU PRE WORD (RichText - Riešenie medzier) ---
             if "experience" in data:
                 for job in data["experience"]:
                     full_text = ""
                     if "details" in job and isinstance(job["details"], list):
                         for item in job["details"]:
                             clean_item = str(item).strip()
+                            # 6 medzier simuluje odsadenie, 'o' je odrážka
                             full_text += f"      o  {clean_item}\n"
+                    
+                    # RichText zabezpečí, že Word pochopí nové riadky
                     job["details_flat"] = RichText(full_text.rstrip())
             
-            return data # Úspech, vraciame dáta a končíme funkciu.
+            return data # HOTOVO, vraciame dáta a končíme.
 
         except Exception as e:
             error_msg = str(e)
             
-            # Ak je to chyba 404 (Nenájdený), ideme ticho na ďalší model
+            # 404 = Model neexistuje (ignorujeme a ideme ďalej)
             if "404" in error_msg or "not found" in error_msg.lower():
                 continue 
             
-            # Ak je to chyba 429 (Limit), musíme počkať
+            # 429 = Limit (počkáme a ideme na ďalší model)
             elif "429" in error_msg:
-                st.warning(f"⚠️ Model {model_name} je preťažený. Skúšam záložný model...")
-                time.sleep(2) # Krátka pauza a ideme na ďalší model v zozname
+                st.warning(f"⚠️ Model {model_name} je momentálne preťažený. Prepínam na záložný model...")
+                time.sleep(1) 
                 continue
             
             else:
-                # Iná kritická chyba
+                # Iná chyba (napr. JSON error)
                 st.error(f"Chyba pri modeli {model_name}: {e}")
                 return None
 
-    st.error("❌ Nepodarilo sa nájsť žiadny funkčný model. Skontroluj API kľúč.")
+    st.error("❌ Nepodarilo sa nájsť žiadny funkčný model. Skontroluj API kľúč alebo kvóty.")
     return None
 
 def generate_word(data, template_file):
@@ -153,6 +154,8 @@ with col2:
 if uploaded_file and st.button("🚀 Vygenerovať", type="primary"):
     with st.spinner("Hľadám najlepší AI model a pracujem..."):
         text = extract_text_from_pdf(uploaded_file)
+        
+        # Voláme našu robustnú funkciu
         data = get_ai_data_robust(text, notes)
         
         if data:
