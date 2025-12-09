@@ -56,6 +56,7 @@ def get_ai_data_openai(content, user_notes, is_image=False, mime_type="image/jpe
        - "details" v experience musí byť ZOZNAM (Array) stringov.
        - "languages" musí byť ZOZNAM (Array) stringov.
        - "skills" musí byť ZOZNAM (Array) stringov.
+    7. RADENIE (Dôležité): Vzdelanie (education) aj Skúsenosti (experience) musia byť zoradené od NAJNOVŠIEHO po najstaršie (Reverse Chronological).
     
     JSON ŠTRUKTÚRA:
     {
@@ -154,7 +155,7 @@ def generate_word(data, template_file):
 
 # --- UI APLIKÁCIE ---
 st.title("Generátor DE Profilov 🇩🇪")
-st.caption("Verzia: PDF + Obrázky (Vision)")
+st.caption("Verzia: PDF + Obrázky (Vision) + Zoradenie")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -197,9 +198,8 @@ if uploaded_files:
                         if file.type == "application/pdf":
                             text = extract_text_from_pdf(file)
                             # Ak je PDF prázdne (sken), skúsime ho poslať ako obrázok? 
-                            # Zatiaľ predpokladáme textové PDF, alebo fallbackne na prázdny text + OCR v AI
                             if not text.strip():
-                                st.warning(f"⚠️ PDF {file.name} vyzerá ako obrázok/sken. Výsledok nemusí byť presný (Na skeny treba JPG).")
+                                st.warning(f"⚠️ PDF {file.name} vyzerá ako obrázok/sken. Ak výsledok nebude dobrý, skonvertuj ho na JPG.")
                             
                             data = get_ai_data_openai(text, notes, is_image=False)
                         
