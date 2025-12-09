@@ -8,7 +8,7 @@ from pypdf import PdfReader
 # --- CONFIG ---
 st.set_page_config(page_title="Areon CV Generator", page_icon="📄")
 
-# Načítanie API kľúča
+# Načítanie API kľúča zo Secrets
 if "GOOGLE_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 else:
@@ -22,7 +22,7 @@ def extract_text_from_pdf(uploaded_file):
     return text
 
 def get_ai_data(cv_text, user_notes):
-    # Použijeme model, ktorý fungoval
+    # Používame model, ktorý tvoj server na 100% vidí (podľa diagnostiky)
     model = genai.GenerativeModel('gemini-flash-latest')
     
     system_prompt = """
@@ -80,19 +80,17 @@ def get_ai_data(cv_text, user_notes):
         clean_json = response.text.replace("```json", "").replace("```", "").strip()
         data = json.loads(clean_json)
 
-        # --- PRÍPRAVA TEXTU PRE WORD (RichText) ---
+        # --- OPRAVA FORMÁTOVANIA PRE WORD ---
+        # Spojíme zoznamy do jedného RichText bloku, aby sme sa vyhli medzerám vo Worde
         if "experience" in data:
             for job in data["experience"]:
                 full_text = ""
                 if "details" in job and isinstance(job["details"], list):
                     for item in job["details"]:
-                        # Vyrobíme manuálne odrážky pomocou medzier a 'o'
-                        # \n je nový riadok
-                        clean_item = str(item).strip()
-                        full_text += f"      o  {clean_item}\n"
+                        # 6 medzier simuluje odsadenie pre druhú úroveň odrážok
+                        full_text += f"      o  {item}\n"
                 
-                # Zabalíme to do RichText objektu, aby Word chápal tie nové riadky
-                # rstrip() odstráni posledný prázdny riadok na konci
+                # Zabalíme do RichText, aby Word pochopil "Entery" a formátovanie
                 job["details_flat"] = RichText(full_text.rstrip())
         
         return data
@@ -109,7 +107,7 @@ def generate_word(data, template_file):
     bio.seek(0)
     return bio
 
-# --- UI ---
+# --- UI APLIKÁCIE ---
 st.title("Generátor DE Profilov 🇩🇪")
 col1, col2 = st.columns(2)
 with col1:
@@ -127,7 +125,6 @@ if uploaded_file and st.button("🚀 Vygenerovať", type="primary"):
                 st.success("Hotovo!")
                 
                 safe_name = data['personal'].get('name', 'Kandidat').replace(' ', '_')
-                
                 st.download_button(
                     label="📥 Stiahnuť Word", 
                     data=doc, 
@@ -135,4 +132,4 @@ if uploaded_file and st.button("🚀 Vygenerovať", type="primary"):
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 )
             except Exception as e:
-                st.error(f"Chyba pri tvorbe Wordu (Template): {e}")
+                st.error(f"Chyba Wordu: {e}")
