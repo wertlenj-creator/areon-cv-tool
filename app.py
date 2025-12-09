@@ -20,6 +20,10 @@ def extract_text_from_pdf(uploaded_file):
     return text
 
 def get_ai_data_openai(cv_text, user_notes):
+    """
+    Táto funkcia získa dáta z OpenAI A ROVNO ich pripraví pre Word.
+    Tým odľahčíme zvyšok kódu od zložitej logiky.
+    """
     url = "https://api.openai.com/v1/chat/completions"
     headers = {
         "Content-Type": "application/json",
@@ -89,6 +93,18 @@ def get_ai_data_openai(cv_text, user_notes):
         result = response.json()
         content = result['choices'][0]['message']['content']
         data = json.loads(content)
+        
+        # --- INTERNÁ ÚPRAVA PRE WORD (TABULÁTORY) ---
+        # Robíme to už tu, aby sme nemuseli kopírovať kód v UI časti
+        if "experience" in data:
+            for job in data["experience"]:
+                full_text = ""
+                if "details" in job and isinstance(job["details"], list):
+                    for item in job["details"]:
+                        clean_item = str(item).strip()
+                        full_text += f"•\t{clean_item}\n"
+                job["details_flat"] = RichText(full_text.rstrip())
+        
         return data
 
     except Exception as e:
@@ -103,21 +119,20 @@ def generate_word(data, template_file):
     bio.seek(0)
     return bio
 
-# --- UI ---
+# --- UI APLIKÁCIE ---
 st.title("Generátor DE Profilov 🇩🇪")
-st.caption("Verzia: Smart Mode (Single/Batch)")
+st.caption("Verzia: OpenAI (Stable)")
 
 col1, col2 = st.columns(2)
 with col1:
     uploaded_files = st.file_uploader("Nahraj PDF (jedno alebo viac)", type=["pdf"], accept_multiple_files=True)
 
 with col2:
-    notes = st.text_area("Poznámky")
+    notes = st.text_area("Spoločné poznámky")
 
-# LOGIKA PRE ROZHODOVANIE (1 vs VIAC)
 if uploaded_files:
     
-    # --- SCENÁR A: LEN 1 SÚBOR ---
+    # --- SCENÁR A: JEDEN SÚBOR ---
     if len(uploaded_files) == 1:
         if st.button("🚀 Vygenerovať profil", type="primary"):
             if not API_KEY:
@@ -125,36 +140,25 @@ if uploaded_files:
             else:
                 pdf_file = uploaded_files[0]
                 with st.spinner(f"Spracovávam {pdf_file.name}..."):
-                    try:
-                        text = extract_text_from_pdf(pdf_file)
-                        data = get_ai_data_openai(text, notes)
-                        
-                        if data:
-                            # RichText (Tabulátory)
-                            if "experience" in data:
-                                for job in data["experience"]:
-                                    full_text = ""
-                                    if "details" in job and isinstance(job["details"], list):
-                                        for item in job["details"]:
-                                            clean_item = str(item).strip()
-                                            full_text += f"•\t{clean_item}\n"
-                                    job["details_flat"] = RichText(full_text.rstrip())
-
+                    text = extract_text_from_pdf(pdf_file)
+                    data = get_ai_data_openai(text, notes) # Dáta už sú pripravené aj s formátovaním
+                    
+                    if data:
+                        try:
                             doc = generate_word(data, "template.docx")
                             st.success("Hotovo!")
                             safe_name = data.get('personal', {}).get('name', 'Kandidat').replace(' ', '_')
                             
-                            # Priame stiahnutie .docx
                             st.download_button(
                                 label="📥 Stiahnuť Word (.docx)",
                                 data=doc,
                                 file_name=f"Profil_{safe_name}.docx",
                                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                             )
-                    except Exception as e:
-                        st.error(f"Chyba: {e}")
+                        except Exception as e:
+                            st.error(f"Chyba pri tvorbe Wordu: {e}")
 
-    # --- SCENÁR B: VIAC SÚBOROV (ZIP BALÍK) ---
+    # --- SCENÁR B: VIAC SÚBOROV (ZIP) ---
     else:
         if st.button(f"🚀 Vygenerovať balík ({len(uploaded_files)} profilov)", type="primary"):
             if not API_KEY:
@@ -173,11 +177,24 @@ if uploaded_files:
                             data = get_ai_data_openai(text, notes)
                             
                             if data:
-                                if "experience" in data:
-                                    for job in data["experience"]:
-                                        full_text = ""
-                                        if "details" in job and isinstance(job["details"], list):
-                                            for item in job["details"]:
-                                                clean_item = str(item).strip()
-                                                full_text += f"•\t{clean_item}\n"
-                                        job["details_flat"] =
+                                doc_io = generate_word(data, "template.docx")
+                                safe_name = data.get('personal', {}).get('name', 'Kandidat').replace(' ', '_')
+                                zf.writestr(f"Profil_{safe_name}.docx", doc_io.getvalue())
+                                success_count += 1
+                                st.write(f"✅ {safe_name}")
+                            else:
+                                st.error(f"❌ Chyba pri {pdf_file.name}")
+                                
+                        except Exception as e:
+                            st.error(f"❌ Kritická chyba pri {pdf_file.name}: {e}")
+
+                my_bar.progress(100, text="Hotovo!")
+                
+                if success_count > 0:
+                    st.success(f"Hotovo! Spracovaných {success_count} súborov.")
+                    st.download_button(
+                        label="📦 Stiahnuť všetko (ZIP)",
+                        data=zip_buffer.getvalue(),
+                        file_name="Areon_Profily.zip",
+                        mime="application/zip"
+                    )
