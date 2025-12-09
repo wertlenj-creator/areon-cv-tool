@@ -3,7 +3,7 @@ import google.generativeai as genai
 from docxtpl import DocxTemplate, RichText
 import json
 import io
-import time  # <--- Pridané pre časovač
+import time
 from pypdf import PdfReader
 
 # --- CONFIG ---
@@ -23,8 +23,9 @@ def extract_text_from_pdf(uploaded_file):
     return text
 
 def get_ai_data(cv_text, user_notes):
-    # Model gemini-flash-latest je super, ale má limit 5 žiadostí/minútu
-    model = genai.GenerativeModel('gemini-flash-latest')
+    # ZMENA: Prechádzame na stabilný 1.5 Flash (veľké limity zadarmo)
+    # Vďaka novej knižnici (0.8.5) toto už nebude hádzať chybu 404.
+    model = genai.GenerativeModel('gemini-1.5-flash')
     
     system_prompt = """
     Správaš sa ako senior HR špecialista pre Areon. Priprav dáta pre nemecký profil kandidáta.
@@ -76,7 +77,7 @@ def get_ai_data(cv_text, user_notes):
     
     final_prompt = system_prompt.replace("{notes}", user_notes) + "\n" + cv_text
     
-    # --- NOVINKA: AUTOMATICKÉ OPAKOVANIE PRI PREŤAŽENÍ ---
+    # Retry logika (ponechávame pre istotu)
     max_retries = 3
     for attempt in range(max_retries):
         try:
@@ -91,25 +92,24 @@ def get_ai_data(cv_text, user_notes):
                     if "details" in job and isinstance(job["details"], list):
                         for item in job["details"]:
                             clean_item = str(item).strip()
+                            # Medzery pre odsadenie + odrážka o
                             full_text += f"      o  {clean_item}\n"
                     
                     job["details_flat"] = RichText(full_text.rstrip())
             
-            return data # Úspech! Vrátime dáta.
+            return data
 
         except Exception as e:
-            # Ak je to chyba 429 (Preťaženie), počkáme a skúsime znova
             if "429" in str(e):
-                wait_time = 35 # Pre istotu 35 sekúnd
-                st.warning(f"⚠️ Google AI je vyťažené (Speed Limit). Čakám {wait_time} sekúnd a skúsim to znova automaticky... (Pokus {attempt+1}/{max_retries})")
+                wait_time = 10 # Pri 1.5 Flash stačí kratšie čakanie
+                st.warning(f"⚠️ Limit API dosiahnutý. Čakám {wait_time}s... (Pokus {attempt+1}/{max_retries})")
                 time.sleep(wait_time)
-                continue # Ide sa na ďalší pokus
+                continue
             else:
-                # Iná chyba - vypíšeme ju a končíme
                 st.error(f"Chyba AI: {e}")
                 return None
     
-    st.error("Nepodarilo sa vygenerovať profil ani na 3 pokusy. Skús to neskôr.")
+    st.error("Nepodarilo sa vygenerovať profil. Skús to neskôr.")
     return None
 
 def generate_word(data, template_file):
@@ -129,7 +129,7 @@ with col2:
     notes = st.text_area("Poznámky", placeholder="Napr. doplň vodičák sk. B...")
 
 if uploaded_file and st.button("🚀 Vygenerovať", type="primary"):
-    with st.spinner("Pracujem... (Ak to trvá dlhšie, čakám na uvoľnenie AI kapacity)"):
+    with st.spinner("Pracujem..."):
         text = extract_text_from_pdf(uploaded_file)
         data = get_ai_data(text, notes)
         if data:
