@@ -1,4 +1,28 @@
+import streamlit as st
+import google.generativeai as genai
+from docxtpl import DocxTemplate, RichText
+import json
+import io
+from pypdf import PdfReader
+
+# --- CONFIG ---
+st.set_page_config(page_title="Areon CV Generator", page_icon="📄")
+
+# Načítanie API kľúča
+if "GOOGLE_API_KEY" in st.secrets:
+    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+else:
+    st.error("Chýba API kľúč! Nastav GOOGLE_API_KEY v Secrets.")
+
+def extract_text_from_pdf(uploaded_file):
+    reader = PdfReader(uploaded_file)
+    text = ""
+    for page in reader.pages:
+        text += page.extract_text() + "\n"
+    return text
+
 def get_ai_data(cv_text, user_notes):
+    # Použijeme model, ktorý fungoval
     model = genai.GenerativeModel('gemini-flash-latest')
     
     system_prompt = """
@@ -56,25 +80,59 @@ def get_ai_data(cv_text, user_notes):
         clean_json = response.text.replace("```json", "").replace("```", "").strip()
         data = json.loads(clean_json)
 
-        # --- NOVÁ ČASŤ: PRÍPRAVA TEXTU PRE WORD (ABY NEBOLI MEDZERY) ---
-        # Prejdeme všetky práce a vyrobíme "hotový text" pre detaily
+        # --- PRÍPRAVA TEXTU PRE WORD (RichText) ---
         if "experience" in data:
             for job in data["experience"]:
-                # Spojíme detaily do jedného textu s odrážkami
-                # \n znamená nový riadok. "      o " simuluje odsadenie a guličku.
-                # Používame RichText, aby Word chápal nové riadky
                 full_text = ""
                 if "details" in job and isinstance(job["details"], list):
                     for item in job["details"]:
-                        # Tu si nastavíš medzery: 6 medzier pred 'o' spraví odsadenie
-                        full_text += f"      o  {item}\n" 
+                        # Vyrobíme manuálne odrážky pomocou medzier a 'o'
+                        # \n je nový riadok
+                        clean_item = str(item).strip()
+                        full_text += f"      o  {clean_item}\n"
                 
-                # Uložíme to do novej premennej 'details_flat'
-                # .strip() na konci odstráni posledný prázdny riadok
-                job["details_flat"] = full_text.rstrip()
+                # Zabalíme to do RichText objektu, aby Word chápal tie nové riadky
+                # rstrip() odstráni posledný prázdny riadok na konci
+                job["details_flat"] = RichText(full_text.rstrip())
         
         return data
 
     except Exception as e:
         st.error(f"Chyba AI: {e}")
         return None
+
+def generate_word(data, template_file):
+    doc = DocxTemplate(template_file)
+    doc.render(data)
+    bio = io.BytesIO()
+    doc.save(bio)
+    bio.seek(0)
+    return bio
+
+# --- UI ---
+st.title("Generátor DE Profilov 🇩🇪")
+col1, col2 = st.columns(2)
+with col1:
+    uploaded_file = st.file_uploader("Nahraj PDF", type=["pdf"])
+with col2:
+    notes = st.text_area("Poznámky", placeholder="Napr. doplň vodičák sk. B...")
+
+if uploaded_file and st.button("🚀 Vygenerovať", type="primary"):
+    with st.spinner("Pracujem..."):
+        text = extract_text_from_pdf(uploaded_file)
+        data = get_ai_data(text, notes)
+        if data:
+            try:
+                doc = generate_word(data, "template.docx")
+                st.success("Hotovo!")
+                
+                safe_name = data['personal'].get('name', 'Kandidat').replace(' ', '_')
+                
+                st.download_button(
+                    label="📥 Stiahnuť Word", 
+                    data=doc, 
+                    file_name=f"Profil_{safe_name}.docx", 
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+            except Exception as e:
+                st.error(f"Chyba pri tvorbe Wordu (Template): {e}")
