@@ -8,8 +8,8 @@ from pypdf import PdfReader
 # --- CONFIG ---
 st.set_page_config(page_title="Areon CV Generator", page_icon="📄")
 
-# Načítanie Google kľúča
-API_KEY = st.secrets.get("GOOGLE_API_KEY", "")
+# Načítanie OpenAI kľúča
+API_KEY = st.secrets.get("OPENAI_API_KEY", "")
 
 def extract_text_from_pdf(uploaded_file):
     reader = PdfReader(uploaded_file)
@@ -18,54 +18,90 @@ def extract_text_from_pdf(uploaded_file):
         text += page.extract_text() + "\n"
     return text
 
-def get_ai_data_direct(cv_text, user_notes):
-    # POUŽIJEME MODEL, KTORÝ TVOJ ÚČET POZNÁ (Podľa diagnostiky)
-    # Ak máš platený účet, tento model nebude hádzať 429.
-    model_name = "gemini-flash-latest"
+def get_ai_data_openai(cv_text, user_notes):
+    # Použijeme gpt-4o-mini (Najlepší pomer cena/výkon pre tento účel)
+    url = "https://api.openai.com/v1/chat/completions"
     
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={API_KEY}"
-    headers = {"Content-Type": "application/json"}
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {API_KEY}"
+    }
 
-    system_instruction = """
-    Správaš sa ako senior HR špecialista pre Areon. Priprav dáta pre nemecký profil kandidáta.
-    VÝSTUP MUSÍ BYŤ LEN ČISTÝ JSON.
-    """
+    system_prompt = """
+    Správaš sa ako senior HR špecialista pre Areon. Tvojou úlohou je extrahovať dáta z CV do nemeckého profilu.
+    Odpovedaj IBA v JSON formáte.
     
-    final_prompt = f"{system_instruction}\nPoznámky: {user_notes}\nCV Text:\n{cv_text}"
+    PRAVIDLÁ:
+    1. Jazyk výstupu: Nemčina (Business German).
+    2. Školy/Odbory: Prelož do nemčiny.
+    3. Firmy: Nechaj originál.
+    4. Dátum narodenia: Ak chýba, odhadni rok (napr. "1990").
+    5. Pohlavie: Muž = "Mann ♂", Žena = "Frau ♀".
+    6. Formátovanie:
+       - "details" v experience musí byť ZOZNAM (Array) stringov.
+       - "languages" musí byť ZOZNAM (Array) stringov.
+       - "skills" musí byť ZOZNAM (Array) stringov.
+    
+    JSON ŠTRUKTÚRA:
+    {
+        "personal": {
+            "name": "Meno Priezvisko",
+            "birth_date": "DD. Month YYYY",
+            "nationality": "Nationalität (DE)",
+            "gender": "Mann ♂ / Frau ♀"
+        },
+        "experience": [
+            {
+                "title": "Pozícia (DE)",
+                "company": "Firma",
+                "period": "MM/YYYY - MM/YYYY",
+                "details": ["Bod 1", "Bod 2", "Bod 3"]
+            }
+        ],
+        "education": [
+             {
+                "school": "Škola (DE)",
+                "specialization": "Odbor (DE)",
+                "period": "Rok - Rok",
+                "location": "Mesto"
+             }
+        ],
+        "languages": ["Jazyk 1", "Jazyk 2"],
+        "skills": ["Skill 1", "Skill 2"]
+    }
+    """
 
     payload = {
-        "contents": [{"parts": [{"text": final_prompt}]}]
+        "model": "gpt-4o-mini",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Poznámky: {user_notes}\nCV Text:\n{cv_text}"}
+        ],
+        "response_format": {"type": "json_object"}, # Zaručí bezchybný JSON
+        "temperature": 0.2
     }
 
     try:
         response = requests.post(url, headers=headers, data=json.dumps(payload))
         
         if response.status_code != 200:
-            st.error(f"❌ Chyba Google ({response.status_code}): {response.text}")
+            st.error(f"❌ Chyba OpenAI ({response.status_code}): {response.text}")
             return None
 
-        result_json = response.json()
-        
-        try:
-            raw_text = result_json['candidates'][0]['content']['parts'][0]['text']
-        except (KeyError, IndexError):
-            st.error("Google vrátil prázdnu odpoveď.")
-            return None
-
-        clean_json = raw_text.replace("```json", "").replace("```", "").strip()
-        data = json.loads(clean_json)
+        result = response.json()
+        content = result['choices'][0]['message']['content']
+        data = json.loads(content)
 
         # --- PRÍPRAVA PRE WORD (TABULÁTORY) ---
+        # Aby to sedelo s tvojím nastavením "Hanging Indent" vo Worde
         if "experience" in data:
             for job in data["experience"]:
                 full_text = ""
                 if "details" in job and isinstance(job["details"], list):
                     for item in job["details"]:
                         clean_item = str(item).strip()
-                        # Používame TABULÁTOR (\t) pre zarovnanie vo Worde
+                        # Odrážka + Tabulátor (Word to zarovná podľa pravítka)
                         full_text += f"•\t{clean_item}\n"
-                
-                # Zabalíme do RichText - Word to pochopí
                 job["details_flat"] = RichText(full_text.rstrip())
         
         return data
@@ -84,7 +120,7 @@ def generate_word(data, template_file):
 
 # --- UI ---
 st.title("Generátor DE Profilov 🇩🇪")
-st.caption(f"Verzia: Gemini Flash Latest (Paid/High Limit)")
+st.caption("Verzia: OpenAI GPT-4o Mini (Stable)")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -94,11 +130,11 @@ with col2:
 
 if uploaded_file and st.button("🚀 Vygenerovať", type="primary"):
     if not API_KEY:
-        st.error("Chýba API kľúč! Skontroluj Secrets, či tam máš 'GOOGLE_API_KEY'.")
+        st.error("Chýba API kľúč! Nastav 'OPENAI_API_KEY' v Secrets.")
     else:
-        with st.spinner("Generujem profil..."):
+        with st.spinner("OpenAI pracuje..."):
             text = extract_text_from_pdf(uploaded_file)
-            data = get_ai_data_direct(text, notes)
+            data = get_ai_data_openai(text, notes)
             
             if data:
                 try:
