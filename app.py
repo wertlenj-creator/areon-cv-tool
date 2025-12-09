@@ -19,11 +19,12 @@ def extract_text_from_pdf(uploaded_file):
     return text
 
 def get_ai_data_direct(cv_text, user_notes):
-    # POKUS: Použijeme model z tvojej diagnostiky - "Lite" verziu.
-    # Lite verzie bývajú menej vyťažené.
-    model_name = "gemini-2.0-flash-lite-preview-02-05"
+    # TOTO JE TEN SPRÁVNY MODEL.
+    # V diagnostike si ho mal. Fungoval, len bol preťažený.
+    # Má limit zadarmo, na rozdiel od verzie 2.5.
+    target_model = "gemini-2.0-flash"
     
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent?key={API_KEY}"
     headers = {"Content-Type": "application/json"}
 
     system_instruction = """
@@ -32,54 +33,57 @@ def get_ai_data_direct(cv_text, user_notes):
     """
     
     final_prompt = f"{system_instruction}\nPoznámky: {user_notes}\nCV Text:\n{cv_text}"
+    payload = {"contents": [{"parts": [{"text": final_prompt}]}]}
 
-    payload = {
-        "contents": [{"parts": [{"text": final_prompt}]}]
-    }
+    # Skúsime to poslať až 3-krát, ak by bol Google preťažený
+    max_retries = 3
+    
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(url, headers=headers, data=json.dumps(payload))
+            
+            # Ak je všetko OK (200)
+            if response.status_code == 200:
+                result_json = response.json()
+                try:
+                    raw_text = result_json['candidates'][0]['content']['parts'][0]['text']
+                    clean_json = raw_text.replace("```json", "").replace("```", "").strip()
+                    data = json.loads(clean_json)
 
-    try:
-        # Odosielame požiadavku
-        response = requests.post(url, headers=headers, data=json.dumps(payload))
-        
-        # Ak Lite model zlyhá (napr. 429 alebo 404), skúsime ešte jeden z tvojho zoznamu
-        if response.status_code != 200:
-            # Záložný model: gemini-pro-latest (tiež bol v tvojom zozname)
-            fallback = "gemini-pro-latest"
-            # st.warning(f"Lite model nešiel ({response.status_code}), skúšam {fallback}...")
+                    # RichText úprava pre Word
+                    if "experience" in data:
+                        for job in data["experience"]:
+                            full_text = ""
+                            if "details" in job and isinstance(job["details"], list):
+                                for item in job["details"]:
+                                    clean_item = str(item).strip()
+                                    full_text += f"      o  {clean_item}\n"
+                            job["details_flat"] = RichText(full_text.rstrip())
+                    
+                    return data # Úspech!
+                
+                except (KeyError, IndexError, json.JSONDecodeError):
+                    st.error("Google vrátil nečitateľnú odpoveď.")
+                    return None
+
+            # Ak je preťažený (429)
+            elif response.status_code == 429:
+                wait_time = 10 # Počkáme 10 sekúnd
+                st.warning(f"⚠️ Model je preťažený. Čakám {wait_time} sekúnd a skúsim to znova... (Pokus {attempt+1}/{max_retries})")
+                time.sleep(wait_time)
+                continue # Ideme na ďalší pokus
             
-            url_backup = f"https://generativelanguage.googleapis.com/v1beta/models/{fallback}:generateContent?key={API_KEY}"
-            response = requests.post(url_backup, headers=headers, data=json.dumps(payload))
-            
-            if response.status_code != 200:
+            # Iná chyba (napr. 404 alebo 400)
+            else:
                 st.error(f"❌ Chyba Google ({response.status_code}): {response.text}")
                 return None
 
-        result_json = response.json()
-        
-        try:
-            raw_text = result_json['candidates'][0]['content']['parts'][0]['text']
-        except (KeyError, IndexError):
-            st.error("Google vrátil prázdnu odpoveď.")
+        except Exception as e:
+            st.error(f"Kritická chyba pripojenia: {e}")
             return None
 
-        clean_json = raw_text.replace("```json", "").replace("```", "").strip()
-        data = json.loads(clean_json)
-
-        # RichText úprava
-        if "experience" in data:
-            for job in data["experience"]:
-                full_text = ""
-                if "details" in job and isinstance(job["details"], list):
-                    for item in job["details"]:
-                        clean_item = str(item).strip()
-                        full_text += f"      o  {clean_item}\n"
-                job["details_flat"] = RichText(full_text.rstrip())
-        
-        return data
-
-    except Exception as e:
-        st.error(f"Kritická chyba: {e}")
-        return None
+    st.error("❌ Nepodarilo sa získať dáta ani po opakovaných pokusoch.")
+    return None
 
 def generate_word(data, template_file):
     doc = DocxTemplate(template_file)
@@ -91,7 +95,7 @@ def generate_word(data, template_file):
 
 # --- UI ---
 st.title("Generátor DE Profilov 🇩🇪")
-st.caption("Verzia: Gemini 2.0 Lite (Direct API)")
+st.caption(f"Verzia: Gemini 2.0 Flash (Direct)")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -103,7 +107,7 @@ if uploaded_file and st.button("🚀 Vygenerovať", type="primary"):
     if not API_KEY:
         st.error("Chýba API kľúč!")
     else:
-        with st.spinner("Pracujem..."):
+        with st.spinner("Spracovávam..."):
             text = extract_text_from_pdf(uploaded_file)
             data = get_ai_data_direct(text, notes)
             
