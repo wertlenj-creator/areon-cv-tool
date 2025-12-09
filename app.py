@@ -1,19 +1,17 @@
 import streamlit as st
-import google.generativeai as genai
-from docxtpl import DocxTemplate, RichText
+import requests  # <--- Toto nahrádza google-generativeai
 import json
 import io
 import time
+from docxtpl import DocxTemplate, RichText
 from pypdf import PdfReader
 
 # --- CONFIG ---
 st.set_page_config(page_title="Areon CV Generator", page_icon="📄")
 
-# Načítanie API kľúča
-api_key = st.secrets.get("GOOGLE_API_KEY", "")
-if api_key:
-    genai.configure(api_key=api_key)
-else:
+# Načítanie Kľúča
+API_KEY = st.secrets.get("GOOGLE_API_KEY", "")
+if not API_KEY:
     st.error("Chýba API kľúč! Nastav GOOGLE_API_KEY v Secrets.")
 
 def extract_text_from_pdf(uploaded_file):
@@ -23,16 +21,24 @@ def extract_text_from_pdf(uploaded_file):
         text += page.extract_text() + "\n"
     return text
 
-def get_ai_data_safe(cv_text, user_notes):
-    # TOTO JE KĽÚČOVÁ ZMENA:
-    # Skúsime moderný model. Ak zlyhá (404), použijeme starý (gemini-pro).
+def get_ai_data_direct(cv_text, user_notes):
+    """
+    Táto funkcia obchádza Python knižnicu a volá Google priamo cez URL.
+    Tým sa vyhneme chybám '404 not found' spôsobeným zlou inštaláciou.
+    """
     
-    primary_model = "gemini-1.5-flash"
-    fallback_model = "gemini-pro"   # Tento model existuje už dlho a funguje aj na starej knižnici
+    # Použijeme model 1.5 Flash (najlepší pre Free tier)
+    # Toto je priama adresa na Google server
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}"
+    
+    headers = {
+        "Content-Type": "application/json"
+    }
 
-    system_prompt = """
+    # Prompt
+    system_instruction = """
     Správaš sa ako senior HR špecialista pre Areon. Priprav dáta pre nemecký profil kandidáta.
-    VÝSTUP MUSÍ BYŤ LEN ČISTÝ JSON.
+    VÝSTUP MUSÍ BYŤ LEN ČISTÝ JSON (bez ```json značiek).
     
     PRAVIDLÁ:
     1. Jazyk výstupu: Nemčina (Business German).
@@ -73,47 +79,55 @@ def get_ai_data_safe(cv_text, user_notes):
         "skills": ["Skill 1", "Skill 2"]
     }
     """
-    final_prompt = system_prompt + f"\nPoznámky: {user_notes}\nCV Text:\n{cv_text}"
+    
+    final_prompt = f"{system_instruction}\nPoznámky: {user_notes}\nCV Text:\n{cv_text}"
 
-    # --- POKUS 1: Moderný model ---
+    # Príprava dát pre odoslanie
+    payload = {
+        "contents": [{
+            "parts": [{"text": final_prompt}]
+        }]
+    }
+
     try:
-        model = genai.GenerativeModel(primary_model)
-        response = model.generate_content(final_prompt)
-        clean_json = response.text.replace("```json", "").replace("```", "").strip()
-        data = json.loads(clean_json)
-    
-    except Exception as e:
-        error_msg = str(e)
-        # Ak dostaneme chybu 404 (Nenájdený), okamžite prepíname na zálohu
-        if "404" in error_msg or "not found" in error_msg.lower() or "supported" in error_msg:
-            st.warning(f"⚠️ Server používa staršiu verziu, prepínam na model '{fallback_model}'...")
-            try:
-                # --- POKUS 2: Starý model (Záloha) ---
-                model = genai.GenerativeModel(fallback_model)
-                response = model.generate_content(final_prompt)
-                clean_json = response.text.replace("```json", "").replace("```", "").strip()
-                data = json.loads(clean_json)
-            except Exception as e2:
-                st.error(f"❌ Zlyhal aj záložný model: {e2}")
-                return None
-        elif "429" in error_msg:
-            st.error("❌ Vyčerpaný limit API kľúča (Quota exceeded).")
-            return None
-        else:
-            st.error(f"❌ Chyba AI: {e}")
+        # Odoslanie požiadavky (Requests POST)
+        response = requests.post(url, headers=headers, data=json.dumps(payload))
+        
+        # Kontrola odpovede
+        if response.status_code != 200:
+            st.error(f"Chyba komunikácie s Google: {response.status_code}")
+            st.code(response.text) # Vypíše detail chyby
             return None
 
-    # --- SPRACOVANIE DÁT PRE WORD ---
-    if "experience" in data:
-        for job in data["experience"]:
-            full_text = ""
-            if "details" in job and isinstance(job["details"], list):
-                for item in job["details"]:
-                    clean_item = str(item).strip()
-                    full_text += f"      o  {clean_item}\n"
-            job["details_flat"] = RichText(full_text.rstrip())
-    
-    return data
+        # Spracovanie výsledku
+        result_json = response.json()
+        
+        # Vytiahnutie textu z tej zložitej Google odpovede
+        try:
+            raw_text = result_json['candidates'][0]['content']['parts'][0]['text']
+        except (KeyError, IndexError):
+            st.error("Google vrátil prázdnu odpoveď (pravdepodobne blokovanie obsahu).")
+            return None
+
+        # Čistenie JSONu
+        clean_json = raw_text.replace("```json", "").replace("```", "").strip()
+        data = json.loads(clean_json)
+
+        # --- PRÍPRAVA PRE WORD (RichText) ---
+        if "experience" in data:
+            for job in data["experience"]:
+                full_text = ""
+                if "details" in job and isinstance(job["details"], list):
+                    for item in job["details"]:
+                        clean_item = str(item).strip()
+                        full_text += f"      o  {clean_item}\n"
+                job["details_flat"] = RichText(full_text.rstrip())
+        
+        return data
+
+    except Exception as e:
+        st.error(f"Kritická chyba: {e}")
+        return None
 
 def generate_word(data, template_file):
     doc = DocxTemplate(template_file)
@@ -125,6 +139,7 @@ def generate_word(data, template_file):
 
 # --- UI ---
 st.title("Generátor DE Profilov 🇩🇪")
+st.caption("Verzia: Direct Connect (Bypass Library)")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -133,10 +148,9 @@ with col2:
     notes = st.text_area("Poznámky")
 
 if uploaded_file and st.button("🚀 Vygenerovať", type="primary"):
-    with st.spinner("Pracujem..."):
+    with st.spinner("Pripájam sa na Google Direct API..."):
         text = extract_text_from_pdf(uploaded_file)
-        # Voláme funkciu SAFE, ktorá si poradí s chybou 404
-        data = get_ai_data_safe(text, notes)
+        data = get_ai_data_direct(text, notes)
         
         if data:
             try:
