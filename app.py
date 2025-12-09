@@ -9,7 +9,6 @@ from pypdf import PdfReader
 # --- CONFIG ---
 st.set_page_config(page_title="Areon CV Generator", page_icon="📄")
 
-# Načítanie API kľúča
 if "GOOGLE_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 else:
@@ -23,18 +22,13 @@ def extract_text_from_pdf(uploaded_file):
     return text
 
 def get_ai_data_robust(cv_text, user_notes):
-    """
-    Skúša rad za radom rôzne modely podľa toho, čo je dostupné.
-    Zoznam je zoradený podľa tvojej diagnostiky.
-    """
-    
-    # ZOZNAM MODELOV (Priorita podľa tvojej diagnostiky)
+    # ZMENA PORADIA: Na prvé miesto dávame model s najväčším limitom zadarmo
     candidate_models = [
-        "gemini-2.0-flash",        # Nový, rýchly model (bol v tvojom zozname)
-        "gemini-2.0-flash-exp",    # Záloha pre verziu 2.0
-        "gemini-1.5-pro-latest",   # Silný Pro model
-        "gemini-flash-latest",     # (Tento hádzal limit, je až ako 4. možnosť)
-        "gemini-pro"               # Stará klasika (istota)
+        "gemini-1.5-flash",       # Kráľ Free Tieru (1500 RPM) - už nebude 404 lebo máme novú lib
+        "gemini-1.5-flash-latest",
+        "gemini-1.5-flash-001",
+        "gemini-1.5-pro",
+        "gemini-pro"              # Stará záloha
     ]
 
     system_prompt = """
@@ -86,53 +80,38 @@ def get_ai_data_robust(cv_text, user_notes):
     
     final_prompt = system_prompt.replace("{notes}", user_notes) + "\n" + cv_text
 
-    # --- HLAVNÁ SLUČKA (Skúšame modely) ---
     for model_name in candidate_models:
         try:
-            # st.write(f"🔧 Skúšam model: {model_name}...") # Debug (odkomentuj ak chceš vidieť proces)
             model = genai.GenerativeModel(model_name)
-            
-            # Skúsime vygenerovať obsah
             response = model.generate_content(final_prompt)
-            
-            # Ak sme tu, model fungoval! Spracujeme dáta.
             clean_json = response.text.replace("```json", "").replace("```", "").strip()
             data = json.loads(clean_json)
 
-            # --- PRÍPRAVA TEXTU PRE WORD (RichText - Riešenie medzier) ---
+            # RichText úprava pre Word
             if "experience" in data:
                 for job in data["experience"]:
                     full_text = ""
                     if "details" in job and isinstance(job["details"], list):
                         for item in job["details"]:
                             clean_item = str(item).strip()
-                            # 6 medzier simuluje odsadenie, 'o' je odrážka
                             full_text += f"      o  {clean_item}\n"
-                    
-                    # RichText zabezpečí, že Word pochopí nové riadky
                     job["details_flat"] = RichText(full_text.rstrip())
             
-            return data # HOTOVO, vraciame dáta a končíme.
+            return data
 
         except Exception as e:
             error_msg = str(e)
-            
-            # 404 = Model neexistuje (ignorujeme a ideme ďalej)
-            if "404" in error_msg or "not found" in error_msg.lower():
-                continue 
-            
-            # 429 = Limit (počkáme a ideme na ďalší model)
-            elif "429" in error_msg:
-                st.warning(f"⚠️ Model {model_name} je momentálne preťažený. Prepínam na záložný model...")
-                time.sleep(1) 
+            if "429" in error_msg:
+                st.warning(f"⚠️ Model {model_name} je vyčerpaný. Skúšam ďalší...")
+                time.sleep(1)
                 continue
-            
+            elif "404" in error_msg:
+                continue
             else:
-                # Iná chyba (napr. JSON error)
                 st.error(f"Chyba pri modeli {model_name}: {e}")
                 return None
 
-    st.error("❌ Nepodarilo sa nájsť žiadny funkčný model. Skontroluj API kľúč alebo kvóty.")
+    st.error("❌ Všetky modely sú momentálne vyťažené. Skús to o hodinu alebo použi nový API kľúč.")
     return None
 
 def generate_word(data, template_file):
@@ -152,23 +131,15 @@ with col2:
     notes = st.text_area("Poznámky", placeholder="Napr. doplň vodičák sk. B...")
 
 if uploaded_file and st.button("🚀 Vygenerovať", type="primary"):
-    with st.spinner("Hľadám najlepší AI model a pracujem..."):
+    with st.spinner("Hľadám voľný AI model..."):
         text = extract_text_from_pdf(uploaded_file)
-        
-        # Voláme našu robustnú funkciu
         data = get_ai_data_robust(text, notes)
         
         if data:
             try:
                 doc = generate_word(data, "template.docx")
-                st.success("Hotovo! Profil je pripravený.")
-                
+                st.success("Hotovo!")
                 safe_name = data['personal'].get('name', 'Kandidat').replace(' ', '_')
-                st.download_button(
-                    label="📥 Stiahnuť Word", 
-                    data=doc, 
-                    file_name=f"Profil_{safe_name}.docx", 
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                )
+                st.download_button("📥 Stiahnuť Word", doc, f"Profil_{safe_name}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
             except Exception as e:
-                st.error(f"Chyba pri tvorbe Wordu: {e}")
+                st.error(f"Chyba Wordu: {e}")
