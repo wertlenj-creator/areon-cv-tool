@@ -1,18 +1,14 @@
 import streamlit as st
-import requests  # <--- Toto nahrádza google-generativeai
+import requests
 import json
 import io
-import time
 from docxtpl import DocxTemplate, RichText
 from pypdf import PdfReader
 
 # --- CONFIG ---
 st.set_page_config(page_title="Areon CV Generator", page_icon="📄")
 
-# Načítanie Kľúča
 API_KEY = st.secrets.get("GOOGLE_API_KEY", "")
-if not API_KEY:
-    st.error("Chýba API kľúč! Nastav GOOGLE_API_KEY v Secrets.")
 
 def extract_text_from_pdf(uploaded_file):
     reader = PdfReader(uploaded_file)
@@ -22,98 +18,52 @@ def extract_text_from_pdf(uploaded_file):
     return text
 
 def get_ai_data_direct(cv_text, user_notes):
-    """
-    Táto funkcia obchádza Python knižnicu a volá Google priamo cez URL.
-    Tým sa vyhneme chybám '404 not found' spôsobeným zlou inštaláciou.
-    """
+    # POKUS: Použijeme 'gemini-pro' (Verzia 1.0). 
+    # Je to najstarší a najstabilnejší model, ktorý by nemal hádzať 404.
+    model_name = "gemini-pro"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={API_KEY}"
     
-    # Použijeme model 1.5 Flash (najlepší pre Free tier)
-    # Toto je priama adresa na Google server
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}"
-    
-    headers = {
-        "Content-Type": "application/json"
-    }
+    headers = {"Content-Type": "application/json"}
 
-    # Prompt
     system_instruction = """
     Správaš sa ako senior HR špecialista pre Areon. Priprav dáta pre nemecký profil kandidáta.
-    VÝSTUP MUSÍ BYŤ LEN ČISTÝ JSON (bez ```json značiek).
-    
-    PRAVIDLÁ:
-    1. Jazyk výstupu: Nemčina (Business German).
-    2. Školy/Odbory: Prelož do nemčiny.
-    3. Firmy: Nechaj originál.
-    4. Dátum narodenia: Ak chýba, odhadni rok (napr. "1990").
-    5. Pohlavie: Muž = "Mann ♂", Žena = "Frau ♀".
-    6. Formátovanie:
-       - "details" v experience musí byť ZOZNAM (Array) stringov.
-       - "languages" musí byť ZOZNAM (Array) stringov.
-       - "skills" musí byť ZOZNAM (Array) stringov.
-    
-    JSON ŠTRUKTÚRA:
-    {
-        "personal": {
-            "name": "Meno Priezvisko",
-            "birth_date": "DD. Month YYYY",
-            "nationality": "Nationalität (DE)",
-            "gender": "Mann ♂ / Frau ♀"
-        },
-        "experience": [
-            {
-                "title": "Pozícia (DE)",
-                "company": "Firma",
-                "period": "MM/YYYY - MM/YYYY",
-                "details": ["Bod 1", "Bod 2", "Bod 3"]
-            }
-        ],
-        "education": [
-             {
-                "school": "Škola (DE)",
-                "specialization": "Odbor (DE)",
-                "period": "Rok - Rok",
-                "location": "Mesto"
-             }
-        ],
-        "languages": ["Jazyk 1", "Jazyk 2"],
-        "skills": ["Skill 1", "Skill 2"]
-    }
+    VÝSTUP MUSÍ BYŤ LEN ČISTÝ JSON.
     """
     
     final_prompt = f"{system_instruction}\nPoznámky: {user_notes}\nCV Text:\n{cv_text}"
 
-    # Príprava dát pre odoslanie
     payload = {
-        "contents": [{
-            "parts": [{"text": final_prompt}]
-        }]
+        "contents": [{"parts": [{"text": final_prompt}]}]
     }
 
     try:
-        # Odoslanie požiadavky (Requests POST)
         response = requests.post(url, headers=headers, data=json.dumps(payload))
         
-        # Kontrola odpovede
+        # Ak by náhodou gemini-pro nešiel, vypíšeme chybu, ale skúsime ešte jeden záložný
         if response.status_code != 200:
-            st.error(f"Chyba komunikácie s Google: {response.status_code}")
-            st.code(response.text) # Vypíše detail chyby
-            return None
+            # Záchranný pokus s iným názvom
+            if response.status_code == 404:
+                # Skúsime 'gemini-1.0-pro' (niekedy sa volá takto)
+                url_backup = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.0-pro:generateContent?key={API_KEY}"
+                response = requests.post(url_backup, headers=headers, data=json.dumps(payload))
+                
+            if response.status_code != 200:
+                st.error(f"Chyba Google ({response.status_code}): {response.text}")
+                return None
 
-        # Spracovanie výsledku
         result_json = response.json()
         
-        # Vytiahnutie textu z tej zložitej Google odpovede
+        # Bezpečnostné vytiahnutie textu
         try:
             raw_text = result_json['candidates'][0]['content']['parts'][0]['text']
         except (KeyError, IndexError):
-            st.error("Google vrátil prázdnu odpoveď (pravdepodobne blokovanie obsahu).")
+            st.error("Google vrátil neplatnú odpoveď (Safety Block). Skús iné CV.")
             return None
 
-        # Čistenie JSONu
         clean_json = raw_text.replace("```json", "").replace("```", "").strip()
         data = json.loads(clean_json)
 
-        # --- PRÍPRAVA PRE WORD (RichText) ---
+        # RichText úprava
         if "experience" in data:
             for job in data["experience"]:
                 full_text = ""
@@ -139,7 +89,7 @@ def generate_word(data, template_file):
 
 # --- UI ---
 st.title("Generátor DE Profilov 🇩🇪")
-st.caption("Verzia: Direct Connect (Bypass Library)")
+st.caption("Verzia: Gemini Pro (Stable)")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -148,15 +98,18 @@ with col2:
     notes = st.text_area("Poznámky")
 
 if uploaded_file and st.button("🚀 Vygenerovať", type="primary"):
-    with st.spinner("Pripájam sa na Google Direct API..."):
-        text = extract_text_from_pdf(uploaded_file)
-        data = get_ai_data_direct(text, notes)
-        
-        if data:
-            try:
-                doc = generate_word(data, "template.docx")
-                st.success("Hotovo!")
-                safe_name = data.get('personal', {}).get('name', 'Kandidat').replace(' ', '_')
-                st.download_button("📥 Stiahnuť Word", doc, f"Profil_{safe_name}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-            except Exception as e:
-                st.error(f"Chyba Wordu: {e}")
+    if not API_KEY:
+        st.error("Chýba API kľúč!")
+    else:
+        with st.spinner("Pripájam sa na Google..."):
+            text = extract_text_from_pdf(uploaded_file)
+            data = get_ai_data_direct(text, notes)
+            
+            if data:
+                try:
+                    doc = generate_word(data, "template.docx")
+                    st.success("Hotovo!")
+                    safe_name = data.get('personal', {}).get('name', 'Kandidat').replace(' ', '_')
+                    st.download_button("📥 Stiahnuť Word", doc, f"Profil_{safe_name}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                except Exception as e:
+                    st.error(f"Chyba Wordu: {e}")
