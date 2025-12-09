@@ -2,36 +2,14 @@ import streamlit as st
 import requests
 import json
 import io
-import time
 from docxtpl import DocxTemplate, RichText
 from pypdf import PdfReader
 
 # --- CONFIG ---
 st.set_page_config(page_title="Areon CV Generator", page_icon="📄")
 
-# --- SIDEBAR: VÝBER MODELU ---
-st.sidebar.header("⚙️ Nastavenia")
-provider = st.sidebar.radio("Poskytovateľ AI:", ["Google Gemini (Free)", "OpenAI (Platené)"])
-
-if provider == "Google Gemini (Free)":
-    api_key = st.secrets.get("GOOGLE_API_KEY", "")
-    # Zoznam všetkých možných modelov na testovanie
-    model_options = [
-        "gemini-1.5-flash",       # Štandard (Najlepší)
-        "gemini-1.5-flash-latest",
-        "gemini-1.5-flash-001",
-        "gemini-1.5-pro",
-        "gemini-2.0-flash-exp",   # Experimentálny
-        "gemini-pro"              # Starý
-    ]
-    selected_model = st.sidebar.selectbox("Vyber model:", model_options)
-    
-else:
-    api_key = st.secrets.get("OPENAI_API_KEY", "")
-    selected_model = "gpt-4o-mini" # Lacný a rýchly model od OpenAI
-    st.sidebar.info("Vyžaduje OPENAI_API_KEY v Secrets.")
-
-# --- FUNKCIE ---
+# Načítame OpenAI kľúč zo Secrets
+API_KEY = st.secrets.get("OPENAI_API_KEY", "")
 
 def extract_text_from_pdf(uploaded_file):
     reader = PdfReader(uploaded_file)
@@ -40,11 +18,18 @@ def extract_text_from_pdf(uploaded_file):
         text += page.extract_text() + "\n"
     return text
 
-def get_ai_data(cv_text, user_notes, model_name, provider):
+def get_data_from_openai(cv_text, user_notes):
+    # Použijeme model gpt-4o-mini (lacný, rýchly, inteligentný)
+    url = "https://api.openai.com/v1/chat/completions"
     
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {API_KEY}"
+    }
+
     system_prompt = """
-    Správaš sa ako senior HR špecialista pre Areon. Priprav dáta pre nemecký profil kandidáta.
-    VÝSTUP MUSÍ BYŤ LEN ČISTÝ JSON (bez ```json).
+    Správaš sa ako senior HR špecialista pre Areon. Tvojou úlohou je extrahovať dáta z CV do nemeckého profilu.
+    Odpovedaj IBA v JSON formáte.
     
     PRAVIDLÁ:
     1. Jazyk výstupu: Nemčina (Business German).
@@ -85,60 +70,29 @@ def get_ai_data(cv_text, user_notes, model_name, provider):
         "skills": ["Skill 1", "Skill 2"]
     }
     """
-    final_prompt = f"{system_prompt}\nPoznámky: {user_notes}\nCV Text:\n{cv_text}"
 
-    # --- LOGIKA PRE GOOGLE ---
-    if provider == "Google Gemini (Free)":
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
-        headers = {"Content-Type": "application/json"}
-        payload = {"contents": [{"parts": [{"text": final_prompt}]}]}
-        
-        try:
-            response = requests.post(url, headers=headers, data=json.dumps(payload))
-            
-            if response.status_code != 200:
-                st.error(f"❌ Chyba Google ({response.status_code}): {response.text}")
-                return None
-                
-            result = response.json()
-            raw_text = result['candidates'][0]['content']['parts'][0]['text']
-            
-        except Exception as e:
-            st.error(f"Chyba pripojenia: {e}")
-            return None
+    payload = {
+        "model": "gpt-4o-mini",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Poznámky: {user_notes}\nCV Text:\n{cv_text}"}
+        ],
+        "response_format": {"type": "json_object"}, # Toto zaručí, že sa JSON nerozbije
+        "temperature": 0.2
+    }
 
-    # --- LOGIKA PRE OPENAI ---
-    else:
-        url = "https://api.openai.com/v1/chat/completions"
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}"
-        }
-        payload = {
-            "model": model_name,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Poznámky: {user_notes}\nCV Text:\n{cv_text}"}
-            ],
-            "response_format": {"type": "json_object"}
-        }
-        
-        try:
-            response = requests.post(url, headers=headers, data=json.dumps(payload))
-            if response.status_code != 200:
-                st.error(f"❌ Chyba OpenAI ({response.status_code}): {response.text}")
-                return None
-            result = response.json()
-            raw_text = result['choices'][0]['message']['content']
-        except Exception as e:
-            st.error(f"Chyba pripojenia: {e}")
-            return None
-
-    # --- SPRACOVANIE JSON A WORD ---
     try:
-        clean_json = raw_text.replace("```json", "").replace("```", "").strip()
-        data = json.loads(clean_json)
+        response = requests.post(url, headers=headers, data=json.dumps(payload))
+        
+        if response.status_code != 200:
+            st.error(f"Chyba OpenAI ({response.status_code}): {response.text}")
+            return None
 
+        result = response.json()
+        content = result['choices'][0]['message']['content']
+        data = json.loads(content)
+
+        # --- PRÍPRAVA PRE WORD (RichText) ---
         if "experience" in data:
             for job in data["experience"]:
                 full_text = ""
@@ -147,10 +101,11 @@ def get_ai_data(cv_text, user_notes, model_name, provider):
                         clean_item = str(item).strip()
                         full_text += f"      o  {clean_item}\n"
                 job["details_flat"] = RichText(full_text.rstrip())
-        return data
         
+        return data
+
     except Exception as e:
-        st.error(f"Chyba pri čítaní dát z AI: {e}")
+        st.error(f"Kritická chyba: {e}")
         return None
 
 def generate_word(data, template_file):
@@ -161,8 +116,9 @@ def generate_word(data, template_file):
     bio.seek(0)
     return bio
 
-# --- UI HLAVNÉ OKNO ---
+# --- UI ---
 st.title("Generátor DE Profilov 🇩🇪")
+st.caption("Powered by OpenAI GPT-4o")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -171,12 +127,12 @@ with col2:
     notes = st.text_area("Poznámky")
 
 if uploaded_file and st.button("🚀 Vygenerovať", type="primary"):
-    if not api_key:
-        st.error(f"Chyba: Chýba API kľúč pre {provider} v Secrets!")
+    if not API_KEY:
+        st.error("Chýba OPENAI_API_KEY v Secrets!")
     else:
-        with st.spinner(f"Pracujem s modelom {selected_model}..."):
+        with st.spinner("OpenAI pracuje..."):
             text = extract_text_from_pdf(uploaded_file)
-            data = get_ai_data(text, notes, selected_model, provider)
+            data = get_data_from_openai(text, notes)
             
             if data:
                 try:
