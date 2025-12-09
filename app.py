@@ -2,7 +2,7 @@ import streamlit as st
 import requests
 import json
 import io
-import zipfile  # <--- Nová knižnica pre balenie do ZIP
+import zipfile
 from docxtpl import DocxTemplate, RichText
 from pypdf import PdfReader
 
@@ -105,80 +105,79 @@ def generate_word(data, template_file):
 
 # --- UI ---
 st.title("Generátor DE Profilov 🇩🇪")
-st.caption("Verzia: Hromadný ZIP Export (OpenAI)")
+st.caption("Verzia: Smart Mode (Single/Batch)")
 
 col1, col2 = st.columns(2)
 with col1:
     uploaded_files = st.file_uploader("Nahraj PDF (jedno alebo viac)", type=["pdf"], accept_multiple_files=True)
 
 with col2:
-    notes = st.text_area("Spoločné poznámky")
+    notes = st.text_area("Poznámky")
 
-if uploaded_files and st.button(f"🚀 Vygenerovať balík ({len(uploaded_files)} profilov)", type="primary"):
-    if not API_KEY:
-        st.error("Chýba OPENAI_API_KEY v Secrets!")
+# LOGIKA PRE ROZHODOVANIE (1 vs VIAC)
+if uploaded_files:
+    
+    # --- SCENÁR A: LEN 1 SÚBOR ---
+    if len(uploaded_files) == 1:
+        if st.button("🚀 Vygenerovať profil", type="primary"):
+            if not API_KEY:
+                st.error("Chýba OPENAI_API_KEY!")
+            else:
+                pdf_file = uploaded_files[0]
+                with st.spinner(f"Spracovávam {pdf_file.name}..."):
+                    try:
+                        text = extract_text_from_pdf(pdf_file)
+                        data = get_ai_data_openai(text, notes)
+                        
+                        if data:
+                            # RichText (Tabulátory)
+                            if "experience" in data:
+                                for job in data["experience"]:
+                                    full_text = ""
+                                    if "details" in job and isinstance(job["details"], list):
+                                        for item in job["details"]:
+                                            clean_item = str(item).strip()
+                                            full_text += f"•\t{clean_item}\n"
+                                    job["details_flat"] = RichText(full_text.rstrip())
+
+                            doc = generate_word(data, "template.docx")
+                            st.success("Hotovo!")
+                            safe_name = data.get('personal', {}).get('name', 'Kandidat').replace(' ', '_')
+                            
+                            # Priame stiahnutie .docx
+                            st.download_button(
+                                label="📥 Stiahnuť Word (.docx)",
+                                data=doc,
+                                file_name=f"Profil_{safe_name}.docx",
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                            )
+                    except Exception as e:
+                        st.error(f"Chyba: {e}")
+
+    # --- SCENÁR B: VIAC SÚBOROV (ZIP BALÍK) ---
     else:
-        # Pripravíme si ZIP pamäť
-        zip_buffer = io.BytesIO()
-        
-        # Ukazovateľ postupu (Progress bar)
-        progress_text = "Spracovávam životopisy..."
-        my_bar = st.progress(0, text=progress_text)
-        
-        success_count = 0
-        
-        with zipfile.ZipFile(zip_buffer, "w") as zf:
-            
-            for i, pdf_file in enumerate(uploaded_files):
-                # Aktualizácia progress baru
-                my_bar.progress((i) / len(uploaded_files), text=f"Spracovávam: {pdf_file.name}")
+        if st.button(f"🚀 Vygenerovať balík ({len(uploaded_files)} profilov)", type="primary"):
+            if not API_KEY:
+                st.error("Chýba OPENAI_API_KEY!")
+            else:
+                zip_buffer = io.BytesIO()
+                my_bar = st.progress(0, text="Začínam...")
+                success_count = 0
                 
-                try:
-                    # 1. Extrakcia
-                    text = extract_text_from_pdf(pdf_file)
-                    
-                    # 2. AI Spracovanie
-                    data = get_ai_data_openai(text, notes)
-                    
-                    if data:
-                        # 3. RichText / Word formátovanie
-                        if "experience" in data:
-                            for job in data["experience"]:
-                                full_text = ""
-                                if "details" in job and isinstance(job["details"], list):
-                                    for item in job["details"]:
-                                        clean_item = str(item).strip()
-                                        full_text += f"•\t{clean_item}\n"
-                                job["details_flat"] = RichText(full_text.rstrip())
-
-                        # 4. Generovanie Wordu
-                        doc_io = generate_word(data, "template.docx")
+                with zipfile.ZipFile(zip_buffer, "w") as zf:
+                    for i, pdf_file in enumerate(uploaded_files):
+                        my_bar.progress((i) / len(uploaded_files), text=f"Spracovávam: {pdf_file.name}")
                         
-                        # 5. Pridanie do ZIPu
-                        safe_name = data.get('personal', {}).get('name', 'Kandidat').replace(' ', '_')
-                        file_name_in_zip = f"Profil_{safe_name}.docx"
-                        
-                        # Pozor: ZipFile potrebuje 'bytes', nie 'BytesIO', preto .getvalue()
-                        zf.writestr(file_name_in_zip, doc_io.getvalue())
-                        
-                        success_count += 1
-                        st.write(f"✅ {safe_name} - Pripravený")
-                    else:
-                        st.error(f"❌ {pdf_file.name} - Chyba pri spracovaní")
-                        
-                except Exception as e:
-                    st.error(f"❌ Kritická chyba pri {pdf_file.name}: {e}")
-
-        # Hotovo
-        my_bar.progress(100, text="Hotovo!")
-        
-        if success_count > 0:
-            st.success(f"Úspešne spracovaných {success_count} z {len(uploaded_files)} profilov.")
-            
-            # Jedno tlačidlo na stiahnutie ZIPu
-            st.download_button(
-                label="📦 Stiahnuť všetky profily (ZIP)",
-                data=zip_buffer.getvalue(),
-                file_name="Areon_Profily.zip",
-                mime="application/zip"
-            )
+                        try:
+                            text = extract_text_from_pdf(pdf_file)
+                            data = get_ai_data_openai(text, notes)
+                            
+                            if data:
+                                if "experience" in data:
+                                    for job in data["experience"]:
+                                        full_text = ""
+                                        if "details" in job and isinstance(job["details"], list):
+                                            for item in job["details"]:
+                                                clean_item = str(item).strip()
+                                                full_text += f"•\t{clean_item}\n"
+                                        job["details_flat"] =
