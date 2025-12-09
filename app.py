@@ -22,14 +22,25 @@ def extract_text_from_pdf(uploaded_file):
         text += page.extract_text() + "\n"
     return text
 
-def get_ai_data(cv_text, user_notes):
-    # ZMENA: Prechádzame na stabilný 1.5 Flash (veľké limity zadarmo)
-    # Vďaka novej knižnici (0.8.5) toto už nebude hádzať chybu 404.
-    model = genai.GenerativeModel('gemini-1.5-flash')
+def get_ai_data_robust(cv_text, user_notes):
+    """
+    Táto funkcia skúša rad za radom rôzne modely, kým nenájde funkčný.
+    """
     
+    # ZOZNAM MODELOV (Od najlepšieho po záložné)
+    # 1. gemini-1.5-flash (Ideál - zadarmo a rýchly)
+    # 2. gemini-1.5-flash-001 (Konkrétna verzia, ak alias nefunguje)
+    # 3. gemini-flash-latest (Tvoj 2.5 Flash - funguje, ale má limity)
+    # 4. gemini-pro (Starý spoľahlivý model)
+    candidate_models = [
+        "gemini-1.5-flash",
+        "gemini-1.5-flash-001",
+        "gemini-flash-latest",
+        "gemini-pro"
+    ]
+
     system_prompt = """
     Správaš sa ako senior HR špecialista pre Areon. Priprav dáta pre nemecký profil kandidáta.
-    
     VÝSTUP MUSÍ BYŤ LEN ČISTÝ JSON.
     
     PRAVIDLÁ:
@@ -76,12 +87,17 @@ def get_ai_data(cv_text, user_notes):
     """
     
     final_prompt = system_prompt.replace("{notes}", user_notes) + "\n" + cv_text
-    
-    # Retry logika (ponechávame pre istotu)
-    max_retries = 3
-    for attempt in range(max_retries):
+
+    # --- HLAVNÁ SLUČKA (Skúšame modely) ---
+    for model_name in candidate_models:
         try:
+            # st.write(f"🔧 Skúšam model: {model_name}...") # Debug výpis (voliteľné)
+            model = genai.GenerativeModel(model_name)
+            
+            # Skúsime vygenerovať obsah
             response = model.generate_content(final_prompt)
+            
+            # Ak sme tu, model fungoval! Spracujeme dáta.
             clean_json = response.text.replace("```json", "").replace("```", "").strip()
             data = json.loads(clean_json)
 
@@ -92,24 +108,30 @@ def get_ai_data(cv_text, user_notes):
                     if "details" in job and isinstance(job["details"], list):
                         for item in job["details"]:
                             clean_item = str(item).strip()
-                            # Medzery pre odsadenie + odrážka o
                             full_text += f"      o  {clean_item}\n"
-                    
                     job["details_flat"] = RichText(full_text.rstrip())
             
-            return data
+            return data # Úspech, vraciame dáta a končíme funkciu.
 
         except Exception as e:
-            if "429" in str(e):
-                wait_time = 10 # Pri 1.5 Flash stačí kratšie čakanie
-                st.warning(f"⚠️ Limit API dosiahnutý. Čakám {wait_time}s... (Pokus {attempt+1}/{max_retries})")
-                time.sleep(wait_time)
+            error_msg = str(e)
+            
+            # Ak je to chyba 404 (Nenájdený), ideme ticho na ďalší model
+            if "404" in error_msg or "not found" in error_msg.lower():
+                continue 
+            
+            # Ak je to chyba 429 (Limit), musíme počkať
+            elif "429" in error_msg:
+                st.warning(f"⚠️ Model {model_name} je preťažený. Skúšam záložný model...")
+                time.sleep(2) # Krátka pauza a ideme na ďalší model v zozname
                 continue
+            
             else:
-                st.error(f"Chyba AI: {e}")
+                # Iná kritická chyba
+                st.error(f"Chyba pri modeli {model_name}: {e}")
                 return None
-    
-    st.error("Nepodarilo sa vygenerovať profil. Skús to neskôr.")
+
+    st.error("❌ Nepodarilo sa nájsť žiadny funkčný model. Skontroluj API kľúč.")
     return None
 
 def generate_word(data, template_file):
@@ -129,16 +151,16 @@ with col2:
     notes = st.text_area("Poznámky", placeholder="Napr. doplň vodičák sk. B...")
 
 if uploaded_file and st.button("🚀 Vygenerovať", type="primary"):
-    with st.spinner("Pracujem..."):
+    with st.spinner("Hľadám najlepší AI model a pracujem..."):
         text = extract_text_from_pdf(uploaded_file)
-        data = get_ai_data(text, notes)
+        data = get_ai_data_robust(text, notes)
+        
         if data:
             try:
                 doc = generate_word(data, "template.docx")
-                st.success("Hotovo!")
+                st.success("Hotovo! Profil je pripravený.")
                 
                 safe_name = data['personal'].get('name', 'Kandidat').replace(' ', '_')
-                
                 st.download_button(
                     label="📥 Stiahnuť Word", 
                     data=doc, 
@@ -146,4 +168,4 @@ if uploaded_file and st.button("🚀 Vygenerovať", type="primary"):
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 )
             except Exception as e:
-                st.error(f"Chyba pri tvorbe Wordu (Template): {e}")
+                st.error(f"Chyba pri tvorbe Wordu: {e}")
