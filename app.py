@@ -22,7 +22,7 @@ def extract_text_from_pdf(uploaded_file):
     return text
 
 def get_ai_data(cv_text, user_notes):
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-1.5-pro-latest')
     
     system_prompt = """
     Správaš sa ako senior HR špecialista pre Areon. Priprav dáta pre nemecký profil kandidáta.
