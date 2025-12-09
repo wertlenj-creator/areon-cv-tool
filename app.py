@@ -3,6 +3,7 @@ import requests
 import json
 import io
 import zipfile
+import base64
 from docxtpl import DocxTemplate, RichText
 from pypdf import PdfReader
 
@@ -12,17 +13,28 @@ st.set_page_config(page_title="Areon CV Generator", page_icon="📄")
 # Načítanie OpenAI kľúča
 API_KEY = st.secrets.get("OPENAI_API_KEY", "")
 
-def extract_text_from_pdf(uploaded_file):
-    reader = PdfReader(uploaded_file)
-    text = ""
-    for page in reader.pages:
-        text += page.extract_text() + "\n"
-    return text
+# --- POMOCNÉ FUNKCIE ---
 
-def get_ai_data_openai(cv_text, user_notes):
+def extract_text_from_pdf(uploaded_file):
+    """Vytiahne text z klasického PDF"""
+    try:
+        reader = PdfReader(uploaded_file)
+        text = ""
+        for page in reader.pages:
+            extract = page.extract_text()
+            if extract:
+                text += extract + "\n"
+        return text
+    except Exception:
+        return ""
+
+def encode_image(uploaded_file):
+    """Pripraví obrázok pre OpenAI (Base64)"""
+    return base64.b64encode(uploaded_file.getvalue()).decode('utf-8')
+
+def get_ai_data_openai(content, user_notes, is_image=False, mime_type="image/jpeg"):
     """
-    Táto funkcia získa dáta z OpenAI A ROVNO ich pripraví pre Word.
-    Tým odľahčíme zvyšok kódu od zložitej logiky.
+    Univerzálna funkcia: Zvládne Text (z PDF) aj Obrázok (z JPG/PNG).
     """
     url = "https://api.openai.com/v1/chat/completions"
     headers = {
@@ -74,11 +86,33 @@ def get_ai_data_openai(cv_text, user_notes):
     }
     """
 
+    # --- PRÍPRAVA SPRÁVY PRE AI ---
+    user_message_content = []
+
+    # 1. Pridáme inštrukcie a poznámky
+    text_instruction = f"Poznámky recruitera: {user_notes}\n"
+    if not is_image:
+        text_instruction += f"\nCV Text:\n{content}"
+    else:
+        text_instruction += "\nAnalyzuj priložený obrázok životopisu."
+
+    user_message_content.append({"type": "text", "text": text_instruction})
+
+    # 2. Ak je to obrázok, pridáme ho do správy
+    if is_image:
+        user_message_content.append({
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:{mime_type};base64,{content}",
+                "detail": "high" # Aby AI čítala aj malé písmenká
+            }
+        })
+
     payload = {
-        "model": "gpt-4o-mini",
+        "model": "gpt-4o-mini", # Tento model má "oči" (Vision)
         "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Poznámky: {user_notes}\nCV Text:\n{cv_text}"}
+            {"role": "user", "content": user_message_content}
         ],
         "response_format": {"type": "json_object"},
         "temperature": 0.2
@@ -91,11 +125,10 @@ def get_ai_data_openai(cv_text, user_notes):
             return None
 
         result = response.json()
-        content = result['choices'][0]['message']['content']
-        data = json.loads(content)
+        content_resp = result['choices'][0]['message']['content']
+        data = json.loads(content_resp)
         
-        # --- INTERNÁ ÚPRAVA PRE WORD (TABULÁTORY) ---
-        # Robíme to už tu, aby sme nemuseli kopírovať kód v UI časti
+        # --- ÚPRAVA PRE WORD (TABULÁTORY) ---
         if "experience" in data:
             for job in data["experience"]:
                 full_text = ""
@@ -121,77 +154,95 @@ def generate_word(data, template_file):
 
 # --- UI APLIKÁCIE ---
 st.title("Generátor DE Profilov 🇩🇪")
-st.caption("Verzia: OpenAI (Stable)")
+st.caption("Verzia: PDF + Obrázky (Vision)")
 
 col1, col2 = st.columns(2)
 with col1:
-    uploaded_files = st.file_uploader("Nahraj PDF (jedno alebo viac)", type=["pdf"], accept_multiple_files=True)
+    # ZMENA: Povolili sme aj obrázky
+    uploaded_files = st.file_uploader(
+        "Nahraj súbory (PDF, JPG, PNG)", 
+        type=["pdf", "jpg", "jpeg", "png"], 
+        accept_multiple_files=True
+    )
 
 with col2:
     notes = st.text_area("Spoločné poznámky")
 
+# --- LOGIKA SPRACOVANIA ---
 if uploaded_files:
     
-    # --- SCENÁR A: JEDEN SÚBOR ---
-    if len(uploaded_files) == 1:
-        if st.button("🚀 Vygenerovať profil", type="primary"):
-            if not API_KEY:
-                st.error("Chýba OPENAI_API_KEY!")
-            else:
-                pdf_file = uploaded_files[0]
-                with st.spinner(f"Spracovávam {pdf_file.name}..."):
-                    text = extract_text_from_pdf(pdf_file)
-                    data = get_ai_data_openai(text, notes) # Dáta už sú pripravené aj s formátovaním
+    # Rozhodneme či tlačidlo pre jeden alebo pre balík
+    btn_text = "🚀 Vygenerovať profil" if len(uploaded_files) == 1 else f"🚀 Vygenerovať balík ({len(uploaded_files)})"
+    
+    if st.button(btn_text, type="primary"):
+        if not API_KEY:
+            st.error("Chýba OPENAI_API_KEY!")
+        else:
+            # Príprava pre ZIP (ak bude viac súborov)
+            zip_buffer = io.BytesIO()
+            results = [] # Tu si uložíme úspešné dokumenty
+            
+            # Progress bar
+            my_bar = st.progress(0, text="Začínam...")
+
+            # --- CYKLUS CEZ SÚBORY ---
+            with zipfile.ZipFile(zip_buffer, "w") as zf:
+                for i, file in enumerate(uploaded_files):
+                    my_bar.progress((i) / len(uploaded_files), text=f"Spracovávam: {file.name}")
                     
-                    if data:
-                        try:
-                            doc = generate_word(data, "template.docx")
-                            st.success("Hotovo!")
-                            safe_name = data.get('personal', {}).get('name', 'Kandidat').replace(' ', '_')
-                            
-                            st.download_button(
-                                label="📥 Stiahnuť Word (.docx)",
-                                data=doc,
-                                file_name=f"Profil_{safe_name}.docx",
-                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                            )
-                        except Exception as e:
-                            st.error(f"Chyba pri tvorbe Wordu: {e}")
-
-    # --- SCENÁR B: VIAC SÚBOROV (ZIP) ---
-    else:
-        if st.button(f"🚀 Vygenerovať balík ({len(uploaded_files)} profilov)", type="primary"):
-            if not API_KEY:
-                st.error("Chýba OPENAI_API_KEY!")
-            else:
-                zip_buffer = io.BytesIO()
-                my_bar = st.progress(0, text="Začínam...")
-                success_count = 0
-                
-                with zipfile.ZipFile(zip_buffer, "w") as zf:
-                    for i, pdf_file in enumerate(uploaded_files):
-                        my_bar.progress((i) / len(uploaded_files), text=f"Spracovávam: {pdf_file.name}")
+                    try:
+                        data = None
                         
-                        try:
-                            text = extract_text_from_pdf(pdf_file)
-                            data = get_ai_data_openai(text, notes)
+                        # A. Ak je to PDF
+                        if file.type == "application/pdf":
+                            text = extract_text_from_pdf(file)
+                            # Ak je PDF prázdne (sken), skúsime ho poslať ako obrázok? 
+                            # Zatiaľ predpokladáme textové PDF, alebo fallbackne na prázdny text + OCR v AI
+                            if not text.strip():
+                                st.warning(f"⚠️ PDF {file.name} vyzerá ako obrázok/sken. Výsledok nemusí byť presný (Na skeny treba JPG).")
                             
-                            if data:
-                                doc_io = generate_word(data, "template.docx")
-                                safe_name = data.get('personal', {}).get('name', 'Kandidat').replace(' ', '_')
-                                zf.writestr(f"Profil_{safe_name}.docx", doc_io.getvalue())
-                                success_count += 1
-                                st.write(f"✅ {safe_name}")
-                            else:
-                                st.error(f"❌ Chyba pri {pdf_file.name}")
-                                
-                        except Exception as e:
-                            st.error(f"❌ Kritická chyba pri {pdf_file.name}: {e}")
+                            data = get_ai_data_openai(text, notes, is_image=False)
+                        
+                        # B. Ak je to OBRÁZOK (JPG, PNG)
+                        elif file.type in ["image/jpeg", "image/png", "image/jpg"]:
+                            # Zakódujeme obrázok do base64
+                            base64_img = encode_image(file)
+                            data = get_ai_data_openai(base64_img, notes, is_image=True, mime_type=file.type)
+                        
+                        # C. Spracovanie výsledku
+                        if data:
+                            doc_io = generate_word(data, "template.docx")
+                            safe_name = data.get('personal', {}).get('name', 'Kandidat').replace(' ', '_')
+                            filename_docx = f"Profil_{safe_name}.docx"
+                            
+                            # Uložíme do ZIPu
+                            zf.writestr(filename_docx, doc_io.getvalue())
+                            
+                            # Uložíme si info pre single download
+                            results.append({"name": filename_docx, "data": doc_io.getvalue()})
+                            
+                            st.write(f"✅ {safe_name}")
+                        else:
+                            st.error(f"❌ Chyba pri spracovaní {file.name}")
 
-                my_bar.progress(100, text="Hotovo!")
-                
-                if success_count > 0:
-                    st.success(f"Hotovo! Spracovaných {success_count} súborov.")
+                    except Exception as e:
+                        st.error(f"❌ Kritická chyba pri {file.name}: {e}")
+
+            my_bar.progress(100, text="Hotovo!")
+
+            # --- VÝSTUP (JEDEN vs VIAC) ---
+            if len(results) > 0:
+                # Ak bol len 1 súbor, ponúkneme priame stiahnutie .docx
+                if len(uploaded_files) == 1:
+                    st.download_button(
+                        label="📥 Stiahnuť Word (.docx)",
+                        data=results[0]["data"],
+                        file_name=results[0]["name"],
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    )
+                # Ak bolo viac, ponúkneme ZIP
+                else:
+                    st.success(f"Spracovaných {len(results)} súborov.")
                     st.download_button(
                         label="📦 Stiahnuť všetko (ZIP)",
                         data=zip_buffer.getvalue(),
