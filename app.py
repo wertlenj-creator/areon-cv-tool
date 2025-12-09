@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import json
 import io
+import time
 from docxtpl import DocxTemplate, RichText
 from pypdf import PdfReader
 
@@ -18,16 +19,16 @@ def extract_text_from_pdf(uploaded_file):
     return text
 
 def get_ai_data_direct(cv_text, user_notes):
-    # POKUS: Použijeme 'gemini-pro' (Verzia 1.0). 
-    # Je to najstarší a najstabilnejší model, ktorý by nemal hádzať 404.
-    model_name = "gemini-pro"
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={API_KEY}"
+    # POKUS: Použijeme model z tvojej diagnostiky - "Lite" verziu.
+    # Lite verzie bývajú menej vyťažené.
+    model_name = "gemini-2.0-flash-lite-preview-02-05"
     
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={API_KEY}"
     headers = {"Content-Type": "application/json"}
 
     system_instruction = """
     Správaš sa ako senior HR špecialista pre Areon. Priprav dáta pre nemecký profil kandidáta.
-    VÝSTUP MUSÍ BYŤ LEN ČISTÝ JSON.
+    VÝSTUP MUSÍ BYŤ LEN ČISTÝ JSON (bez ```json).
     """
     
     final_prompt = f"{system_instruction}\nPoznámky: {user_notes}\nCV Text:\n{cv_text}"
@@ -37,27 +38,28 @@ def get_ai_data_direct(cv_text, user_notes):
     }
 
     try:
+        # Odosielame požiadavku
         response = requests.post(url, headers=headers, data=json.dumps(payload))
         
-        # Ak by náhodou gemini-pro nešiel, vypíšeme chybu, ale skúsime ešte jeden záložný
+        # Ak Lite model zlyhá (napr. 429 alebo 404), skúsime ešte jeden z tvojho zoznamu
         if response.status_code != 200:
-            # Záchranný pokus s iným názvom
-            if response.status_code == 404:
-                # Skúsime 'gemini-1.0-pro' (niekedy sa volá takto)
-                url_backup = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.0-pro:generateContent?key={API_KEY}"
-                response = requests.post(url_backup, headers=headers, data=json.dumps(payload))
-                
+            # Záložný model: gemini-pro-latest (tiež bol v tvojom zozname)
+            fallback = "gemini-pro-latest"
+            # st.warning(f"Lite model nešiel ({response.status_code}), skúšam {fallback}...")
+            
+            url_backup = f"https://generativelanguage.googleapis.com/v1beta/models/{fallback}:generateContent?key={API_KEY}"
+            response = requests.post(url_backup, headers=headers, data=json.dumps(payload))
+            
             if response.status_code != 200:
-                st.error(f"Chyba Google ({response.status_code}): {response.text}")
+                st.error(f"❌ Chyba Google ({response.status_code}): {response.text}")
                 return None
 
         result_json = response.json()
         
-        # Bezpečnostné vytiahnutie textu
         try:
             raw_text = result_json['candidates'][0]['content']['parts'][0]['text']
         except (KeyError, IndexError):
-            st.error("Google vrátil neplatnú odpoveď (Safety Block). Skús iné CV.")
+            st.error("Google vrátil prázdnu odpoveď.")
             return None
 
         clean_json = raw_text.replace("```json", "").replace("```", "").strip()
@@ -89,7 +91,7 @@ def generate_word(data, template_file):
 
 # --- UI ---
 st.title("Generátor DE Profilov 🇩🇪")
-st.caption("Verzia: Gemini Pro (Stable)")
+st.caption("Verzia: Gemini 2.0 Lite (Direct API)")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -101,7 +103,7 @@ if uploaded_file and st.button("🚀 Vygenerovať", type="primary"):
     if not API_KEY:
         st.error("Chýba API kľúč!")
     else:
-        with st.spinner("Pripájam sa na Google..."):
+        with st.spinner("Pracujem..."):
             text = extract_text_from_pdf(uploaded_file)
             data = get_ai_data_direct(text, notes)
             
