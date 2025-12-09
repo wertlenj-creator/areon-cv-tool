@@ -24,7 +24,8 @@ def extract_text_from_pdf(uploaded_file):
 def get_ai_data(cv_text, user_notes):
     # --- ZMENA: Používame model, ktorý sme našli v diagnostike ---
     # Použijeme stabilnú verziu 1.5 Flash, ktorá je zadarmo
-    model = genai.GenerativeModel('gemini-1.5-flash') 
+    # Použijeme generický názov, ktorý tvoj server potvrdil v diagnostike
+    model = genai.GenerativeModel('gemini-flash-latest') 
     
     system_prompt = """
     Správaš sa ako senior HR špecialista pre Areon. Priprav dáta pre nemecký profil kandidáta.
