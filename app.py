@@ -39,7 +39,7 @@ def get_ai_data_openai(content, user_notes, is_image=False, mime_type="image/jpe
         "Authorization": f"Bearer {API_KEY}"
     }
 
-    # --- INŠTRUKCIE S ODPLENÝMI PRAVIDLAMI PRE JAZYKY A SKILLS ---
+    # --- INŠTRUKCIE ---
     system_prompt = """
     Správaš sa ako senior HR špecialista pre Areon. Tvojou úlohou je extrahovať dáta z CV do nemeckého profilu.
     Odpovedaj IBA v JSON formáte.
@@ -58,15 +58,14 @@ def get_ai_data_openai(content, user_notes, is_image=False, mime_type="image/jpe
        
        *Rodný jazyk uvádzaj vždy ako posledný.*
 
-    2. SKILLS (SONSTIGE FÄHIGKEITEN) - PRÍSNY ZÁKAZ CEFR:
-       - Pre IT skills (Excel, SAP, atď.) a iné zručnosti NIKDY nepoužívaj A1-C2!
-       - Používaj nemecké slovné popisy:
-         - "Grundkenntnisse" (Základy)
-         - "Gut" (Dobré)
-         - "Fortgeschritten" (Pokročilý)
-         - "Sehr gut" (Veľmi dobré)
-         - "Experte" (Expert)
-       - Príklad výstupu: "Microsoft Excel – Fortgeschritten", "SAP – Grundkenntnisse".
+    2. SKILLS (SONSTIGE FÄHIGKEITEN) - PRIRODZENÝ VÝPIS:
+       - NEPRIDÁVAJ umelé hodnotenia (Gut, Sehr gut), ak v CV nie sú explicitne uvedené!
+       - Ak v CV chýba úroveň, vypíš len názov zručnosti.
+         - Príklad (Zle): "Teamarbeit – Sehr gut"
+         - Príklad (Dobre): "Teamfähigkeit"
+         - Príklad (Dobre): "Microsoft Excel"
+       - Ak je úroveň v CV uvedená, prelož ju do nemčiny (Grundkenntnisse, Fortgeschritten, Experte).
+       - Soft Skills (komunikatívnosť, flexibilita) píš len ako podstatné mená (Kommunikationsfähigkeit, Flexibilität).
 
     3. RADENIE (CHRONOLÓGIA):
        - Vzdelanie a Skúsenosti zoraď od NAJNOVŠIEHO po najstaršie (2024 -> 2010).
@@ -175,7 +174,7 @@ def generate_word(data, template_file):
 
 # --- UI APLIKÁCIE ---
 st.title("Generátor DE Profilov 🇩🇪")
-st.caption("Verzia: Final (Languages=CEFR, Skills=Text)")
+st.caption("Verzia: Final (Skills=Natural)")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -234,17 +233,3 @@ if uploaded_files:
 
             if len(results) > 0:
                 if len(uploaded_files) == 1:
-                    st.download_button(
-                        label="📥 Stiahnuť Word (.docx)",
-                        data=results[0]["data"],
-                        file_name=results[0]["name"],
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    )
-                else:
-                    st.success(f"Spracovaných {len(results)} súborov.")
-                    st.download_button(
-                        label="📦 Stiahnuť všetko (ZIP)",
-                        data=zip_buffer.getvalue(),
-                        file_name="Areon_Profily.zip",
-                        mime="application/zip"
-                    )
