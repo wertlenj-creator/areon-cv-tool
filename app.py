@@ -176,4 +176,74 @@ def generate_word(data, template_file):
 st.title("Generátor DE Profilov 🇩🇪")
 st.caption("Verzia: Final 2.0 (Fixed Indentation)")
 
-col1, col2
+col1, col2 = st.columns(2)
+with col1:
+    uploaded_files = st.file_uploader(
+        "Nahraj súbory (PDF, JPG, PNG)", 
+        type=["pdf", "jpg", "jpeg", "png"], 
+        accept_multiple_files=True
+    )
+
+with col2:
+    notes = st.text_area("Spoločné poznámky")
+
+if uploaded_files:
+    btn_text = "🚀 Vygenerovať profil" if len(uploaded_files) == 1 else f"🚀 Vygenerovať balík ({len(uploaded_files)})"
+    
+    if st.button(btn_text, type="primary"):
+        if not API_KEY:
+            st.error("Chýba OPENAI_API_KEY!")
+        else:
+            zip_buffer = io.BytesIO()
+            results = []
+            my_bar = st.progress(0, text="Začínam...")
+
+            with zipfile.ZipFile(zip_buffer, "w") as zf:
+                for i, file in enumerate(uploaded_files):
+                    my_bar.progress((i) / len(uploaded_files), text=f"Spracovávam: {file.name}")
+                    
+                    try:
+                        data = None
+                        if file.type == "application/pdf":
+                            text = extract_text_from_pdf(file)
+                            if not text.strip():
+                                st.warning(f"⚠️ PDF {file.name} je asi sken. Skús JPG.")
+                            data = get_ai_data_openai(text, notes, is_image=False)
+                        
+                        elif file.type in ["image/jpeg", "image/png", "image/jpg"]:
+                            base64_img = encode_image(file)
+                            data = get_ai_data_openai(base64_img, notes, is_image=True, mime_type=file.type)
+                        
+                        if data:
+                            doc_io = generate_word(data, "template.docx")
+                            safe_name = data.get('personal', {}).get('name', 'Kandidat').replace(' ', '_')
+                            filename_docx = f"Profil_{safe_name}.docx"
+                            
+                            zf.writestr(filename_docx, doc_io.getvalue())
+                            results.append({"name": filename_docx, "data": doc_io.getvalue()})
+                            
+                            st.write(f"✅ {safe_name}")
+                        else:
+                            st.error(f"❌ Chyba pri {file.name}")
+
+                    except Exception as e:
+                        st.error(f"❌ Chyba: {e}")
+
+            my_bar.progress(100, text="Hotovo!")
+
+            if len(results) > 0:
+                if len(uploaded_files) == 1:
+                    st.download_button(
+                        label="📥 Stiahnuť Word (.docx)",
+                        data=results[0]["data"],
+                        file_name=results[0]["name"],
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    )
+                else:
+                    st.success(f"Spracovaných {len(results)} súborov.")
+                    st.download_button(
+                        label="📦 Stiahnuť všetko (ZIP)",
+                        data=zip_buffer.getvalue(),
+                        file_name="Areon_Profily.zip",
+                        mime="application/zip"
+                    )
