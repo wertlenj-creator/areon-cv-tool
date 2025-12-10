@@ -39,32 +39,39 @@ def get_ai_data_openai(content, user_notes, is_image=False, mime_type="image/jpe
         "Authorization": f"Bearer {API_KEY}"
     }
 
-    # --- INŠTRUKCIE S PRÍSNOU STANDARDIZÁCIOU JAZYKOV ---
+    # --- TUTO SÚ NOVÉ PRAVIDLÁ ---
     system_prompt = """
     Správaš sa ako senior HR špecialista pre Areon. Tvojou úlohou je extrahovať dáta z CV do nemeckého profilu.
     Odpovedaj IBA v JSON formáte.
     
     ===========
-    PRAVIDLÁ PRE JAZYKY (CEFR ŠTANDARDIZÁCIA) - VEĽMI DÔLEŽITÉ:
-    Všetky jazykové úrovne v CV (slovné popisy) musíš previesť na štandard CEFR: A1, A2, B1, B2, C1, C2 alebo Muttersprache.
+    1. PRAVIDLÁ PRE JAZYKY (CEFR MAPPING):
+    Všetky jazykové úrovne preveď na: A1, A2, B1, B2, C1, C2 alebo Muttersprache.
+    Použi logiku:
+    - Začiatočník/Základy -> A1/A2
+    - Mierne/Stredne pokročilý -> B1/B2
+    - Pokročilý/Expert -> C1/C2
+    - Native/Rodný -> Muttersprache
+
+    2. LOGIKA PRE NÁRODNOSŤ A JAZYKY (AUTOMATICKÉ DOPLNENIE):
+    Skontroluj národnosť kandidáta a aplikuj tieto pravidlá:
     
-    Použi túto prevodovú tabuľku (Mapping):
+    A) Ak je SLOVÁK (Slovak):
+       - Do zoznamu MUSÍŠ zaradiť: "Tschechisch – C1"
+       - Do zoznamu MUSÍŠ zaradiť: "Slowakisch – Muttersprache"
     
-    🔵 A1 (Začiatočník):
-       - Vstupy: začiatočník, základy, basic, elementary, beginner, Grundkenntnisse, A1.
-    🔵 A2 (Mierne pokročilý):
-       - Vstupy: mierne pokročilý, základy komunikácie, pre-intermediate, lower intermediate, Vorkenntnisse, A2.
-    🟡 B1 (Stredne pokročilý):
-       - Vstupy: stredne pokročilý, mierne pokročilý (ak je kontext silnejší), intermediate, komunikatívna úroveň, gute Kenntnisse, B1.
-    🟡 B2 (Vyššie pokročilý):
-       - Vstupy: pokročilý, veľmi dobrá znalosť, upper-intermediate, fluent (non-native), fließend, B2.
-    🔴 C1 (Profesionál):
-       - Vstupy: veľmi pokročilý, expert, advanced, professional fluency, verhandlungssicher, C1.
-    🔴 C2 / Muttersprache (Native):
-       - Vstupy: materinský jazyk, rodný jazyk, native, bilingual, Muttersprache, C2.
-    
-    Výstupný formát v JSONe musí byť: "Jazyk (Nemecky) – Úroveň"
-    Príklad: "Englisch – B2", "Slowakisch – Muttersprache".
+    B) Ak je ČECH (Czech):
+       - Do zoznamu MUSÍŠ zaradiť: "Slowakisch – C1"
+       - Do zoznamu MUSÍŠ zaradiť: "Tschechisch – Muttersprache"
+       
+    C) Ak je POLIAK (Polish):
+       - Do zoznamu MUSÍŠ zaradiť: "Polnisch – Muttersprache"
+
+    DÔLEŽITÉ PRE RADENIE JAZYKOV:
+    - Cudzie jazyky (Nemčina, Angličtina atď.) uveď ako prvé.
+    - Jazyky z bodov A/B/C (Slovenčina, Čeština, Poľština) uveď až potom.
+    - "Muttersprache" (Rodná reč) musí byť v zozname VŽDY ÚPLNE POSLEDNÁ.
+    - Nevytváraj duplicity (ak je jazyk už v CV, len uprav jeho úroveň podľa týchto pravidiel).
     ===========
 
     ĎALŠIE PRAVIDLÁ:
@@ -174,7 +181,7 @@ def generate_word(data, template_file):
 
 # --- UI APLIKÁCIE ---
 st.title("Generátor DE Profilov 🇩🇪")
-st.caption("Verzia: PDF + Obrázky + CEFR Jazyky")
+st.caption("Verzia: Full Auto (Languages Logic)")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -187,7 +194,6 @@ with col1:
 with col2:
     notes = st.text_area("Spoločné poznámky")
 
-# --- LOGIKA SPRACOVANIA ---
 if uploaded_files:
     btn_text = "🚀 Vygenerovať profil" if len(uploaded_files) == 1 else f"🚀 Vygenerovať balík ({len(uploaded_files)})"
     
