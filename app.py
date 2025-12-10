@@ -39,52 +39,46 @@ def get_ai_data_openai(content, user_notes, is_image=False, mime_type="image/jpe
         "Authorization": f"Bearer {API_KEY}"
     }
 
-    # --- TUTO SÚ NOVÉ PRAVIDLÁ ---
+    # --- INŠTRUKCIE S ODPLENÝMI PRAVIDLAMI PRE JAZYKY A SKILLS ---
     system_prompt = """
     Správaš sa ako senior HR špecialista pre Areon. Tvojou úlohou je extrahovať dáta z CV do nemeckého profilu.
     Odpovedaj IBA v JSON formáte.
     
     ===========
-    1. PRAVIDLÁ PRE JAZYKY (CEFR MAPPING):
-    Všetky jazykové úrovne preveď na: A1, A2, B1, B2, C1, C2 alebo Muttersprache.
-    Použi logiku:
-    - Začiatočník/Základy -> A1/A2
-    - Mierne/Stredne pokročilý -> B1/B2
-    - Pokročilý/Expert -> C1/C2
-    - Native/Rodný -> Muttersprache
+    PRAVIDLÁ PRE SPRACOVANIE ÚDAJOV:
 
-    2. LOGIKA PRE NÁRODNOSŤ A JAZYKY (AUTOMATICKÉ DOPLNENIE):
-    Skontroluj národnosť kandidáta a aplikuj tieto pravidlá:
-    
-    A) Ak je SLOVÁK (Slovak):
-       - Do zoznamu MUSÍŠ zaradiť: "Tschechisch – C1"
-       - Do zoznamu MUSÍŠ zaradiť: "Slowakisch – Muttersprache"
-    
-    B) Ak je ČECH (Czech):
-       - Do zoznamu MUSÍŠ zaradiť: "Slowakisch – C1"
-       - Do zoznamu MUSÍŠ zaradiť: "Tschechisch – Muttersprache"
+    1. JAZYKY (SPRACHKENNTNISSE) - PRÍSNE CEFR:
+       - Tu a LEN TU používaj úrovne: A1, A2, B1, B2, C1, C2 alebo Muttersprache.
+       - Prevod: Začiatočník=A1/A2, Mierne pokročilý=B1, Stredne=B2, Pokročilý=C1, Expert=C2.
        
-    C) Ak je POLIAK (Polish):
-       - Do zoznamu MUSÍŠ zaradiť: "Polnisch – Muttersprache"
+       LOGIKA NÁRODNOSTI (Automatické doplnenie):
+       A) Ak je SLOVÁK: Pridaj "Tschechisch – C1" a "Slowakisch – Muttersprache".
+       B) Ak je ČECH: Pridaj "Slowakisch – C1" a "Tschechisch – Muttersprache".
+       C) Ak je POLIAK: Pridaj "Polnisch – Muttersprache".
+       
+       *Rodný jazyk uvádzaj vždy ako posledný.*
 
-    DÔLEŽITÉ PRE RADENIE JAZYKOV:
-    - Cudzie jazyky (Nemčina, Angličtina atď.) uveď ako prvé.
-    - Jazyky z bodov A/B/C (Slovenčina, Čeština, Poľština) uveď až potom.
-    - "Muttersprache" (Rodná reč) musí byť v zozname VŽDY ÚPLNE POSLEDNÁ.
-    - Nevytváraj duplicity (ak je jazyk už v CV, len uprav jeho úroveň podľa týchto pravidiel).
+    2. SKILLS (SONSTIGE FÄHIGKEITEN) - PRÍSNY ZÁKAZ CEFR:
+       - Pre IT skills (Excel, SAP, atď.) a iné zručnosti NIKDY nepoužívaj A1-C2!
+       - Používaj nemecké slovné popisy:
+         - "Grundkenntnisse" (Základy)
+         - "Gut" (Dobré)
+         - "Fortgeschritten" (Pokročilý)
+         - "Sehr gut" (Veľmi dobré)
+         - "Experte" (Expert)
+       - Príklad výstupu: "Microsoft Excel – Fortgeschritten", "SAP – Grundkenntnisse".
+
+    3. RADENIE (CHRONOLÓGIA):
+       - Vzdelanie a Skúsenosti zoraď od NAJNOVŠIEHO po najstaršie (2024 -> 2010).
+       - Ignoruj poradie v pôvodnom súbore, zoraď to podľa dátumov.
+
+    4. VŠEOBECNÉ:
+       - Jazyk výstupu: Nemčina (Business German).
+       - Školy/Odbory: Prelož do nemčiny.
+       - Firmy: Nechaj originál.
+       - Dátum narodenia: Ak chýba, odhadni rok (napr. "1990").
+       - Pohlavie: Muž = "Mann ♂", Žena = "Frau ♀".
     ===========
-
-    ĎALŠIE PRAVIDLÁ:
-    1. Jazyk výstupu: Nemčina (Business German).
-    2. Školy/Odbory: Prelož do nemčiny.
-    3. Firmy: Nechaj originál.
-    4. Dátum narodenia: Ak chýba, odhadni rok (napr. "1990").
-    5. Pohlavie: Muž = "Mann ♂", Žena = "Frau ♀".
-    6. Formátovanie:
-       - "details" v experience musí byť ZOZNAM (Array) stringov.
-       - "languages" musí byť ZOZNAM (Array) stringov.
-       - "skills" musí byť ZOZNAM (Array) stringov.
-    7. RADENIE: Vzdelanie a Skúsenosti musia byť zoradené REVERZNE CHRONOLOGICKY (najnovšie hore).
     
     JSON ŠTRUKTÚRA:
     {
@@ -181,7 +175,7 @@ def generate_word(data, template_file):
 
 # --- UI APLIKÁCIE ---
 st.title("Generátor DE Profilov 🇩🇪")
-st.caption("Verzia: Full Auto (Languages Logic)")
+st.caption("Verzia: Final (Languages=CEFR, Skills=Text)")
 
 col1, col2 = st.columns(2)
 with col1:
