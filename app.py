@@ -39,17 +39,34 @@ def get_ai_data_openai(content, user_notes, is_image=False, mime_type="image/jpe
         "Authorization": f"Bearer {API_KEY}"
     }
 
-    # --- TUTO JE KĽÚČOVÁ ZMENA V INŠTRUKCIÁCH ---
+    # --- INŠTRUKCIE S PRÍSNOU STANDARDIZÁCIOU JAZYKOV ---
     system_prompt = """
     Správaš sa ako senior HR špecialista pre Areon. Tvojou úlohou je extrahovať dáta z CV do nemeckého profilu.
     Odpovedaj IBA v JSON formáte.
     
-    ❗️ KRITICKÉ PRAVIDLO RADENIA:
-    Ignoruj poradie v pôvodnom súbore!
-    V poliach "experience" a "education" MUSIA byť položky zoradené REVERZNE CHRONOLOGICKY.
-    1. PRVÁ položka v zozname musí byť tá NAJAKTUÁLNEJŠIA (napr. 2024 alebo Heute).
-    2. POSLEDNÁ položka musí byť tá najstaršia (napr. 2005).
+    ===========
+    PRAVIDLÁ PRE JAZYKY (CEFR ŠTANDARDIZÁCIA) - VEĽMI DÔLEŽITÉ:
+    Všetky jazykové úrovne v CV (slovné popisy) musíš previesť na štandard CEFR: A1, A2, B1, B2, C1, C2 alebo Muttersprache.
     
+    Použi túto prevodovú tabuľku (Mapping):
+    
+    🔵 A1 (Začiatočník):
+       - Vstupy: začiatočník, základy, basic, elementary, beginner, Grundkenntnisse, A1.
+    🔵 A2 (Mierne pokročilý):
+       - Vstupy: mierne pokročilý, základy komunikácie, pre-intermediate, lower intermediate, Vorkenntnisse, A2.
+    🟡 B1 (Stredne pokročilý):
+       - Vstupy: stredne pokročilý, mierne pokročilý (ak je kontext silnejší), intermediate, komunikatívna úroveň, gute Kenntnisse, B1.
+    🟡 B2 (Vyššie pokročilý):
+       - Vstupy: pokročilý, veľmi dobrá znalosť, upper-intermediate, fluent (non-native), fließend, B2.
+    🔴 C1 (Profesionál):
+       - Vstupy: veľmi pokročilý, expert, advanced, professional fluency, verhandlungssicher, C1.
+    🔴 C2 / Muttersprache (Native):
+       - Vstupy: materinský jazyk, rodný jazyk, native, bilingual, Muttersprache, C2.
+    
+    Výstupný formát v JSONe musí byť: "Jazyk (Nemecky) – Úroveň"
+    Príklad: "Englisch – B2", "Slowakisch – Muttersprache".
+    ===========
+
     ĎALŠIE PRAVIDLÁ:
     1. Jazyk výstupu: Nemčina (Business German).
     2. Školy/Odbory: Prelož do nemčiny.
@@ -60,6 +77,7 @@ def get_ai_data_openai(content, user_notes, is_image=False, mime_type="image/jpe
        - "details" v experience musí byť ZOZNAM (Array) stringov.
        - "languages" musí byť ZOZNAM (Array) stringov.
        - "skills" musí byť ZOZNAM (Array) stringov.
+    7. RADENIE: Vzdelanie a Skúsenosti musia byť zoradené REVERZNE CHRONOLOGICKY (najnovšie hore).
     
     JSON ŠTRUKTÚRA:
     {
@@ -70,18 +88,14 @@ def get_ai_data_openai(content, user_notes, is_image=False, mime_type="image/jpe
             "gender": "Mann ♂ / Frau ♀"
         },
         "experience": [
-            // TU DAJ NAJAKTUÁLNEJŠIU PRÁCU (2024...) AKO PRVÚ!
             {
                 "title": "Pozícia (DE)",
                 "company": "Firma",
                 "period": "MM/YYYY - MM/YYYY",
                 "details": ["Bod 1", "Bod 2", "Bod 3"]
-            },
-            // STARŠIE PRÁCE NASLEDUJÚ...
+            }
         ],
         "education": [
-             // TU DAJ NAJAKTUÁLNEJŠIU ŠKOLU (2008...) AKO PRVÚ!
-             // Základnú školu daj až na úplný koniec.
              {
                 "school": "Škola (DE)",
                 "specialization": "Odbor (DE)",
@@ -160,7 +174,7 @@ def generate_word(data, template_file):
 
 # --- UI APLIKÁCIE ---
 st.title("Generátor DE Profilov 🇩🇪")
-st.caption("Verzia: PDF + Obrázky + Zoradenie (Fix)")
+st.caption("Verzia: PDF + Obrázky + CEFR Jazyky")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -173,6 +187,7 @@ with col1:
 with col2:
     notes = st.text_area("Spoločné poznámky")
 
+# --- LOGIKA SPRACOVANIA ---
 if uploaded_files:
     btn_text = "🚀 Vygenerovať profil" if len(uploaded_files) == 1 else f"🚀 Vygenerovať balík ({len(uploaded_files)})"
     
