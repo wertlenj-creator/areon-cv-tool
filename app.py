@@ -55,17 +55,12 @@ def get_ai_data_openai(content, user_notes, is_image=False, mime_type="image/jpe
        A) Ak je SLOVÁK: Pridaj "Tschechisch – C1" a "Slowakisch – Muttersprache".
        B) Ak je ČECH: Pridaj "Slowakisch – C1" a "Tschechisch – Muttersprache".
        C) Ak je POLIAK: Pridaj "Polnisch – Muttersprache".
-       
        *Rodný jazyk uvádzaj vždy ako posledný.*
 
     2. SKILLS (SONSTIGE FÄHIGKEITEN) - PRIRODZENÝ VÝPIS:
        - NEPRIDÁVAJ umelé hodnotenia (Gut, Sehr gut), ak v CV nie sú explicitne uvedené!
-       - Ak v CV chýba úroveň, vypíš len názov zručnosti.
-         - Príklad (Zle): "Teamarbeit – Sehr gut"
-         - Príklad (Dobre): "Teamfähigkeit"
-         - Príklad (Dobre): "Microsoft Excel"
-       - Ak je úroveň v CV uvedená, prelož ju do nemčiny (Grundkenntnisse, Fortgeschritten, Experte).
-       - Soft Skills (komunikatívnosť, flexibilita) píš len ako podstatné mená (Kommunikationsfähigkeit, Flexibilität).
+       - Ak v CV chýba úroveň, vypíš len názov zručnosti (napr. "Microsoft Excel", "Teamfähigkeit").
+       - Ak je úroveň uvedená, prelož ju do nemčiny.
 
     3. RADENIE (CHRONOLÓGIA):
        - Vzdelanie a Skúsenosti zoraď od NAJNOVŠIEHO po najstaršie (2024 -> 2010).
@@ -74,9 +69,19 @@ def get_ai_data_openai(content, user_notes, is_image=False, mime_type="image/jpe
     4. VŠEOBECNÉ:
        - Jazyk výstupu: Nemčina (Business German).
        - Školy/Odbory: Prelož do nemčiny.
-       - Firmy: Nechaj originál.
-       - Dátum narodenia: Ak chýba, odhadni rok (napr. "1990").
+       - Dátum narodenia: Ak chýba, odhadni rok.
        - Pohlavie: Muž = "Mann ♂", Žena = "Frau ♀".
+
+    5. LOKALITA A KRAJINA (Dôležité):
+       - V poli "company" pri pracovných skúsenostiach VŽDY uveď formát: "Názov firmy, Mesto (KÓD KRAJINY)".
+       - Kód krajiny (ISO) musíš VYDEUKOVAŤ podľa mesta, aj keď v CV nie je uvedený!
+       - Príklady:
+         - Nitra -> (SK)
+         - Praha -> (CZ)
+         - München -> (DE)
+         - London -> (UK)
+         - Győr -> (HU)
+       - Výsledok má vyzerať napr.: "Jaguar Land Rover, Nitra (SK)"
     ===========
     
     JSON ŠTRUKTÚRA:
@@ -90,7 +95,7 @@ def get_ai_data_openai(content, user_notes, is_image=False, mime_type="image/jpe
         "experience": [
             {
                 "title": "Pozícia (DE)",
-                "company": "Firma",
+                "company": "Firma, Mesto (Krajina)",
                 "period": "MM/YYYY - MM/YYYY",
                 "details": ["Bod 1", "Bod 2", "Bod 3"]
             }
@@ -174,7 +179,7 @@ def generate_word(data, template_file):
 
 # --- UI APLIKÁCIE ---
 st.title("Generátor DE Profilov 🇩🇪")
-st.caption("Verzia: Final 2.0 (Fixed Indentation)")
+st.caption("Verzia: Final (Auto Country Code)")
 
 col1, col2 = st.columns(2)
 with col1:
