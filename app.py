@@ -47,46 +47,39 @@ def get_ai_data_openai(content, user_notes, is_image=False, mime_type="image/jpe
     ===========
     PRAVIDLÁ PRE SPRACOVANIE ÚDAJOV:
 
-    1. JAZYKY (SPRACHKENNTNISSE) - PRÍSNE CEFR:
-       - Tu a LEN TU používaj úrovne: A1, A2, B1, B2, C1, C2 alebo Muttersprache.
-       - Prevod: Začiatočník=A1/A2, Mierne pokročilý=B1, Stredne=B2, Pokročilý=C1, Expert=C2.
-       
-       LOGIKA NÁRODNOSTI (Automatické doplnenie):
-       A) Ak je SLOVÁK: Pridaj "Tschechisch – C1" a "Slowakisch – Muttersprache".
-       B) Ak je ČECH: Pridaj "Slowakisch – C1" a "Tschechisch – Muttersprache".
-       C) Ak je POLIAK: Pridaj "Polnisch – Muttersprache".
-       *Rodný jazyk uvádzaj vždy ako posledný.*
+    1. OSOBNÉ ÚDAJE (PERSONAL DATA):
+       - Do poľa "nationality" napíš LEN národnosť (napr. "Slowakisch", "Tschechisch", "Polnisch").
+       - ZÁKAZ: Do poľa "nationality" NIKDY nepíš jazykovú úroveň (nepíš tam "Muttersprache", "C1" atď.). To patrí do sekcie Jazyky!
 
-    2. SKILLS (SONSTIGE FÄHIGKEITEN) - PRIRODZENÝ VÝPIS:
+    2. JAZYKY (SPRACHKENNTNISSE) - PRÍSNE CEFR:
+       - Tu a LEN TU používaj úrovne: A1, A2, B1, B2, C1, C2 alebo Muttersprache.
+       - LOGIKA NÁRODNOSTI (Automatické doplnenie do poľa languages):
+         A) Ak je SLOVÁK: Pridaj do zoznamu jazykov "Tschechisch – C1" a "Slowakisch – Muttersprache".
+         B) Ak je ČECH: Pridaj do zoznamu jazykov "Slowakisch – C1" a "Tschechisch – Muttersprache".
+         C) Ak je POLIAK: Pridaj do zoznamu jazykov "Polnisch – Muttersprache".
+       *Rodný jazyk uvádzaj v zozname jazykov vždy ako posledný.*
+
+    3. LOKALITA A KRAJINA (Pracovné skúsenosti):
+       - Formát poľa "company": "Názov firmy, Mesto (KÓD KRAJINY)".
+       - Ak mesto/krajina chýba, napíš LEN Názov firmy.
+       - ZÁKAZ: NIKDY nepíš "N/A", "Unknown", "Neznáme". Ak nevieš, nechaj to prázdne (nevypisuj to).
+       - ZÁKAZ: Neuvádzaj ulicu, číslo domu, ani PSČ.
+       - Kód krajiny si musíš DOMYSLIEŤ podľa mesta (Nitra->SK, München->DE).
+
+    4. SKILLS (SONSTIGE FÄHIGKEITEN):
        - NEPRIDÁVAJ umelé hodnotenia (Gut, Sehr gut), ak v CV nie sú explicitne uvedené!
        - Ak v CV chýba úroveň, vypíš len názov zručnosti.
        - Ak je úroveň uvedená, prelož ju do nemčiny.
 
-    3. RADENIE (CHRONOLÓGIA):
+    5. RADENIE (CHRONOLÓGIA):
        - Vzdelanie a Skúsenosti zoraď od NAJNOVŠIEHO po najstaršie (2024 -> 2010).
        - Ignoruj poradie v pôvodnom súbore, zoraď to podľa dátumov.
 
-    4. VŠEOBECNÉ:
+    6. VŠEOBECNÉ:
        - Jazyk výstupu: Nemčina (Business German).
        - Školy/Odbory: Prelož do nemčiny.
        - Dátum narodenia: Ak chýba, odhadni rok.
        - Pohlavie: Muž = "Mann ♂", Žena = "Frau ♀".
-
-    5. LOKALITA A KRAJINA (Dôležité):
-       - Formát poľa "company" musí byť PRESNE: "Názov firmy, Mesto (KÓD KRAJINY)".
-       - ZAKÁZANÉ: Neuvádzaj ulicu, číslo domu, ani PSČ! Len čisté mesto.
-       - ZAKÁZANÉ: Neuvádzaj celý názov krajiny (nepíš "Deutschland", "Slowakei").
-       - POVINNÉ: Použi len ISO kód v zátvorke (SK, DE, AT, CH, CZ, HU, PL...).
-       - Kód krajiny si musíš DOMYSLIEŤ podľa mesta, ak tam nie je.
-       
-       Príklady SPRÁVNE:
-       - "Volkswagen, Bratislava (SK)"
-       - "Audi, Győr (HU)"
-       - "BMW, München (DE)"
-       
-       Príklady NESPRÁVNE:
-       - "Volkswagen, J. Jonáša 1, Bratislava" (Obsahuje ulicu)
-       - "BMW, München, Deutschland" (Obsahuje celý názov krajiny)
     ===========
     
     JSON ŠTRUKTÚRA:
@@ -94,13 +87,13 @@ def get_ai_data_openai(content, user_notes, is_image=False, mime_type="image/jpe
         "personal": {
             "name": "Meno Priezvisko",
             "birth_date": "DD. Month YYYY",
-            "nationality": "Nationalität (DE)",
+            "nationality": "Nationalität (LEN NÁZOV, BEZ ÚROVNE)",
             "gender": "Mann ♂ / Frau ♀"
         },
         "experience": [
             {
                 "title": "Pozícia (DE)",
-                "company": "Firma, Mesto (KÓD)",
+                "company": "Firma, Mesto (KÓD) alebo len Firma",
                 "period": "MM/YYYY - MM/YYYY",
                 "details": ["Bod 1", "Bod 2", "Bod 3"]
             }
@@ -184,7 +177,7 @@ def generate_word(data, template_file):
 
 # --- UI APLIKÁCIE ---
 st.title("Generátor DE Profilov 🇩🇪")
-st.caption("Verzia: Final (No Streets, ISO Country Codes)")
+st.caption("Verzia: Final (No N/A, Clean Nationality)")
 
 col1, col2 = st.columns(2)
 with col1:
