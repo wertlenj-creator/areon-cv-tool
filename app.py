@@ -59,7 +59,7 @@ def get_ai_data_openai(content, user_notes, is_image=False, mime_type="image/jpe
 
     2. SKILLS (SONSTIGE FÄHIGKEITEN) - PRIRODZENÝ VÝPIS:
        - NEPRIDÁVAJ umelé hodnotenia (Gut, Sehr gut), ak v CV nie sú explicitne uvedené!
-       - Ak v CV chýba úroveň, vypíš len názov zručnosti (napr. "Microsoft Excel", "Teamfähigkeit").
+       - Ak v CV chýba úroveň, vypíš len názov zručnosti.
        - Ak je úroveň uvedená, prelož ju do nemčiny.
 
     3. RADENIE (CHRONOLÓGIA):
@@ -73,15 +73,20 @@ def get_ai_data_openai(content, user_notes, is_image=False, mime_type="image/jpe
        - Pohlavie: Muž = "Mann ♂", Žena = "Frau ♀".
 
     5. LOKALITA A KRAJINA (Dôležité):
-       - V poli "company" pri pracovných skúsenostiach VŽDY uveď formát: "Názov firmy, Mesto (KÓD KRAJINY)".
-       - Kód krajiny (ISO) musíš VYDEUKOVAŤ podľa mesta, aj keď v CV nie je uvedený!
-       - Príklady:
-         - Nitra -> (SK)
-         - Praha -> (CZ)
-         - München -> (DE)
-         - London -> (UK)
-         - Győr -> (HU)
-       - Výsledok má vyzerať napr.: "Jaguar Land Rover, Nitra (SK)"
+       - Formát poľa "company" musí byť PRESNE: "Názov firmy, Mesto (KÓD KRAJINY)".
+       - ZAKÁZANÉ: Neuvádzaj ulicu, číslo domu, ani PSČ! Len čisté mesto.
+       - ZAKÁZANÉ: Neuvádzaj celý názov krajiny (nepíš "Deutschland", "Slowakei").
+       - POVINNÉ: Použi len ISO kód v zátvorke (SK, DE, AT, CH, CZ, HU, PL...).
+       - Kód krajiny si musíš DOMYSLIEŤ podľa mesta, ak tam nie je.
+       
+       Príklady SPRÁVNE:
+       - "Volkswagen, Bratislava (SK)"
+       - "Audi, Győr (HU)"
+       - "BMW, München (DE)"
+       
+       Príklady NESPRÁVNE:
+       - "Volkswagen, J. Jonáša 1, Bratislava" (Obsahuje ulicu)
+       - "BMW, München, Deutschland" (Obsahuje celý názov krajiny)
     ===========
     
     JSON ŠTRUKTÚRA:
@@ -95,7 +100,7 @@ def get_ai_data_openai(content, user_notes, is_image=False, mime_type="image/jpe
         "experience": [
             {
                 "title": "Pozícia (DE)",
-                "company": "Firma, Mesto (Krajina)",
+                "company": "Firma, Mesto (KÓD)",
                 "period": "MM/YYYY - MM/YYYY",
                 "details": ["Bod 1", "Bod 2", "Bod 3"]
             }
@@ -179,7 +184,7 @@ def generate_word(data, template_file):
 
 # --- UI APLIKÁCIE ---
 st.title("Generátor DE Profilov 🇩🇪")
-st.caption("Verzia: Final (Auto Country Code)")
+st.caption("Verzia: Final (No Streets, ISO Country Codes)")
 
 col1, col2 = st.columns(2)
 with col1:
