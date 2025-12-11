@@ -8,21 +8,15 @@ from docxtpl import DocxTemplate, RichText
 from pypdf import PdfReader
 
 # --- CONFIG ---
-st.set_page_config(page_title="Areon CV Generator", page_icon="📝", layout="wide")
+st.set_page_config(page_title="Areon CV Generator", page_icon="🇩🇪")
 
 # Načítanie OpenAI kľúča
 API_KEY = st.secrets.get("OPENAI_API_KEY", "")
 
-# --- SESSION STATE INITIALIZATION ---
-# Aby si appka pamätala dáta aj po kliknutí
-if 'processed_data' not in st.session_state:
-    st.session_state.processed_data = {}
-if 'analysis_done' not in st.session_state:
-    st.session_state.analysis_done = False
-
 # --- POMOCNÉ FUNKCIE ---
 
 def extract_text_from_pdf(uploaded_file):
+    """Vytiahne text z klasického PDF"""
     try:
         reader = PdfReader(uploaded_file)
         text = ""
@@ -35,6 +29,7 @@ def extract_text_from_pdf(uploaded_file):
         return ""
 
 def encode_image(uploaded_file):
+    """Pripraví obrázok pre OpenAI (Base64)"""
     return base64.b64encode(uploaded_file.getvalue()).decode('utf-8')
 
 def get_ai_data_openai(content, user_notes, is_image=False, mime_type="image/jpeg"):
@@ -44,38 +39,39 @@ def get_ai_data_openai(content, user_notes, is_image=False, mime_type="image/jpe
         "Authorization": f"Bearer {API_KEY}"
     }
 
-    # --- INŠTRUKCIE (AGRESÍVNY PREKLAD) ---
+    # --- INŠTRUKCIE (PRIDANÝ AGRESÍVNY PREKLAD) ---
     system_prompt = """
     Správaš sa ako senior HR špecialista pre Areon. Tvojou úlohou je extrahovať dáta z CV do nemeckého profilu.
     Odpovedaj IBA v JSON formáte.
     
     ===========
-    !!! KRITICKÉ PRAVIDLO PREKLADU !!!
-    VŠETOK TEXT (okrem názvov firiem) MUSÍ BYŤ V NEMČINE (Business German).
-    - Názvy pozícií: PRELOŽIŤ (napr. "Skladník" -> "Lagerarbeiter").
-    - Popis práce: PRELOŽIŤ do profesionálnej nemčiny.
-    - Názvy škôl a odborov: PRELOŽIŤ (napr. "Stredná odborná škola" -> "Mittlere Fachschule").
-    - Ak je text v CV po slovensky/česky/anglicky -> PRELOŽ HO DO NEMČINY!
+    !!! KRITICKÉ PRAVIDLO PREKLADU (PRELOŽ VŠETKO) !!!
+    Celý výstup MUSÍ byť v profesionálnej NEMČINE (Business German).
+    1. Názvy pozícií: VŽDY PRELOŽIŤ (napr. "Skladník" -> "Lagerarbeiter", "Účtovník" -> "Buchhalter").
+    2. Názvy škôl a odborov: VŽDY PRELOŽIŤ (napr. "Stredná odborná škola" -> "Mittlere Fachschule").
+    3. Popis práce: VŽDY PRELOŽIŤ do nemčiny.
+    4. Výnimka: Názvy firiem ponechaj v origináli.
     ===========
 
-    PRAVIDLÁ PRE ÚDAJE:
+    ĎALŠIE PRAVIDLÁ SPRACOVANIA:
 
-    1. JAZYKY (SPRACHKENNTNISSE) - CEFR:
+    1. JAZYKY (SPRACHKENNTNISSE) - PRÍSNE CEFR:
        - Používaj úrovne: A1, A2, B1, B2, C1, C2 alebo Muttersprache.
        - LOGIKA NÁRODNOSTI:
-         A) Ak je SLOVÁK: Pridaj "Tschechisch – C1", "Slowakisch – Muttersprache".
-         B) Ak je ČECH: Pridaj "Slowakisch – C1", "Tschechisch – Muttersprache".
+         A) Ak je SLOVÁK: Pridaj "Tschechisch – C1" a "Slowakisch – Muttersprache".
+         B) Ak je ČECH: Pridaj "Slowakisch – C1" a "Tschechisch – Muttersprache".
          C) Ak je POLIAK: Pridaj "Polnisch – Muttersprache".
        *Rodný jazyk uvádzaj vždy ako posledný.*
 
     2. SKILLS (SONSTIGE FÄHIGKEITEN):
        - Nepridávaj umelé hodnotenia (Gut, Sehr gut).
-       - Vypíš len názov zručnosti (napr. "Microsoft Excel", "Teamfähigkeit").
+       - Vypíš len názov zručnosti (napr. "Microsoft Excel", "SAP", "Teamfähigkeit").
        - Ak je úroveň uvedená v CV, prelož ju do nemčiny.
 
     3. LOKALITA A KRAJINA:
        - Formát company: "Názov firmy, Mesto (KÓD KRAJINY)".
        - Žiadne ulice, žiadne celé názvy krajín. Len ISO kód (SK, DE, AT...).
+       - Kód si domysli podľa mesta.
 
     4. RADENIE (CHRONOLÓGIA):
        - Vzdelanie a Skúsenosti zoraď od NAJNOVŠIEHO po najstaršie (2024 -> 2010).
@@ -96,7 +92,7 @@ def get_ai_data_openai(content, user_notes, is_image=False, mime_type="image/jpe
         },
         "experience": [
             {
-                "title": "Pozícia (Preložené do DE)",
+                "title": "Pozícia (PRELOŽENÁ DO DE)",
                 "company": "Firma, Mesto (KÓD)",
                 "period": "MM/YYYY - MM/YYYY",
                 "details": ["Bod 1 (DE)", "Bod 2 (DE)"]
@@ -104,8 +100,8 @@ def get_ai_data_openai(content, user_notes, is_image=False, mime_type="image/jpe
         ],
         "education": [
              {
-                "school": "Škola (Preložené do DE)",
-                "specialization": "Odbor (Preložené do DE)",
+                "school": "Škola (PRELOŽENÁ DO DE)",
+                "specialization": "Odbor (PRELOŽENÝ DO DE)",
                 "period": "Rok - Rok",
                 "location": "Mesto"
              }
@@ -115,12 +111,12 @@ def get_ai_data_openai(content, user_notes, is_image=False, mime_type="image/jpe
     }
     """
 
-    # --- PRÍPRAVA SPRÁVY ---
+    # --- PRÍPRAVA SPRÁVY PRE AI ---
     user_message_content = []
+
     text_instruction = f"Poznámky recruitera: {user_notes}\n"
-    
     if not is_image:
-        text_instruction += f"\nCV Text na spracovanie:\n{content}"
+        text_instruction += f"\nCV Text:\n{content}"
     else:
         text_instruction += "\nAnalyzuj priložený obrázok životopisu."
 
@@ -148,25 +144,30 @@ def get_ai_data_openai(content, user_notes, is_image=False, mime_type="image/jpe
     try:
         response = requests.post(url, headers=headers, data=json.dumps(payload))
         if response.status_code != 200:
+            st.error(f"❌ Chyba OpenAI ({response.status_code}): {response.text}")
             return None
-        
-        content_resp = response.json()['choices'][0]['message']['content']
-        return json.loads(content_resp)
 
-    except Exception:
+        result = response.json()
+        content_resp = result['choices'][0]['message']['content']
+        data = json.loads(content_resp)
+        
+        # --- ÚPRAVA PRE WORD (TABULÁTORY) ---
+        if "experience" in data:
+            for job in data["experience"]:
+                full_text = ""
+                if "details" in job and isinstance(job["details"], list):
+                    for item in job["details"]:
+                        clean_item = str(item).strip()
+                        full_text += f"•\t{clean_item}\n"
+                job["details_flat"] = RichText(full_text.rstrip())
+        
+        return data
+
+    except Exception as e:
+        st.error(f"Kritická chyba: {e}")
         return None
 
 def generate_word(data, template_file):
-    # Príprava RichText pre Word pred generovaním
-    if "experience" in data:
-        for job in data["experience"]:
-            full_text = ""
-            if "details" in job and isinstance(job["details"], list):
-                for item in job["details"]:
-                    clean_item = str(item).strip()
-                    full_text += f"•\t{clean_item}\n"
-            job["details_flat"] = RichText(full_text.rstrip())
-            
     doc = DocxTemplate(template_file)
     doc.render(data)
     bio = io.BytesIO()
@@ -176,115 +177,76 @@ def generate_word(data, template_file):
 
 # --- UI APLIKÁCIE ---
 st.title("Generátor DE Profilov 🇩🇪")
-st.caption("Verzia: Editor & Náhľad (v3.0)")
+st.caption("Verzia: Strict DE Translation + ZIP")
 
-col1, col2 = st.columns([1, 2]) # Ľavý stĺpec užší, pravý širší
-
+col1, col2 = st.columns(2)
 with col1:
-    st.info("Krok 1: Nahraj súbory")
     uploaded_files = st.file_uploader(
-        "Súbory (PDF, JPG, PNG)", 
+        "Nahraj súbory (PDF, JPG, PNG)", 
         type=["pdf", "jpg", "jpeg", "png"], 
         accept_multiple_files=True
     )
-    notes = st.text_area("Spoločné poznámky pre AI")
+
+with col2:
+    notes = st.text_area("Spoločné poznámky")
+
+if uploaded_files:
+    btn_text = "🚀 Vygenerovať profil" if len(uploaded_files) == 1 else f"🚀 Vygenerovať balík ({len(uploaded_files)})"
     
-    # Tlačidlo ANALYZOVAŤ
-    if uploaded_files and not st.session_state.analysis_done:
-        if st.button(f"🔍 1. Analyzovať ({len(uploaded_files)}) súborov", type="primary"):
-            if not API_KEY:
-                st.error("Chýba OPENAI_API_KEY!")
-            else:
-                progress_bar = st.progress(0, text="Analyzujem životopisy...")
-                
+    if st.button(btn_text, type="primary"):
+        if not API_KEY:
+            st.error("Chýba OPENAI_API_KEY!")
+        else:
+            zip_buffer = io.BytesIO()
+            results = []
+            my_bar = st.progress(0, text="Začínam...")
+
+            with zipfile.ZipFile(zip_buffer, "w") as zf:
                 for i, file in enumerate(uploaded_files):
-                    progress_bar.progress((i)/len(uploaded_files), text=f"Analyzujem: {file.name}")
+                    my_bar.progress((i) / len(uploaded_files), text=f"Spracovávam: {file.name}")
                     
-                    # Spracovanie
                     try:
                         data = None
                         if file.type == "application/pdf":
                             text = extract_text_from_pdf(file)
+                            if not text.strip():
+                                st.warning(f"⚠️ PDF {file.name} je asi sken. Skús JPG.")
                             data = get_ai_data_openai(text, notes, is_image=False)
+                        
                         elif file.type in ["image/jpeg", "image/png", "image/jpg"]:
-                            b64 = encode_image(file)
-                            data = get_ai_data_openai(b64, notes, is_image=True, mime_type=file.type)
+                            base64_img = encode_image(file)
+                            data = get_ai_data_openai(base64_img, notes, is_image=True, mime_type=file.type)
                         
                         if data:
-                            # Uložíme do session state pod menom súboru
-                            st.session_state.processed_data[file.name] = data
-                        else:
-                            st.error(f"Chyba pri súbore {file.name}")
+                            doc_io = generate_word(data, "template.docx")
+                            safe_name = data.get('personal', {}).get('name', 'Kandidat').replace(' ', '_')
+                            filename_docx = f"Profil_{safe_name}.docx"
                             
+                            zf.writestr(filename_docx, doc_io.getvalue())
+                            results.append({"name": filename_docx, "data": doc_io.getvalue()})
+                            
+                            st.write(f"✅ {safe_name}")
+                        else:
+                            st.error(f"❌ Chyba pri {file.name}")
+
                     except Exception as e:
-                        st.error(f"Chyba: {e}")
-                
-                progress_bar.progress(100, text="Hotovo! Skontroluj dáta vpravo ->")
-                st.session_state.analysis_done = True
-                st.rerun() # Obnoví stránku aby sa ukázal editor
+                        st.error(f"❌ Chyba: {e}")
 
-    # Tlačidlo RESET (ak chceš začať znova)
-    if st.session_state.analysis_done:
-        if st.button("🔄 Začať znova (Vymazať všetko)"):
-            st.session_state.processed_data = {}
-            st.session_state.analysis_done = False
-            st.rerun()
+            my_bar.progress(100, text="Hotovo!")
 
-# --- PRAVÝ STĹPEC (EDITOR) ---
-with col2:
-    if st.session_state.analysis_done and st.session_state.processed_data:
-        st.success("✅ Analýza hotová. Skontroluj a uprav dáta pred generovaním.")
-        st.divider()
-        
-        # Formulár pre hromadné stiahnutie
-        with st.form("edit_form"):
-            
-            # Pre každý súbor vytvoríme rozbaľovacie okno (Expander)
-            for filename, data in st.session_state.processed_data.items():
-                candidate_name = data.get('personal', {}).get('name', 'Neznámy')
-                
-                with st.expander(f"👤 {candidate_name} ({filename})", expanded=False):
-                    st.write("Tu môžeš opraviť údaje (JSON formát). Dávaj pozor na úvodzovky a čiarky!")
-                    
-                    # JSON Editor - tu môžeš prepisovať texty
-                    edited_json = st.text_area(
-                        f"Dáta pre: {filename}",
-                        value=json.dumps(data, indent=4, ensure_ascii=False),
-                        height=400,
-                        key=f"editor_{filename}"
-                    )
-                    
-                    # Uložíme zmenu späť do session state
-                    try:
-                        st.session_state.processed_data[filename] = json.loads(edited_json)
-                    except json.JSONDecodeError:
-                        st.error(f"❌ Chyba v syntaxi JSON pre {filename}! Oprav to.")
-
-            st.divider()
-            
-            # Tlačidlo GENEROWAŤ WORDY
-            submitted = st.form_submit_button("💾 2. Vygenerovať a Stiahnuť Wordy")
-            
-            if submitted:
-                zip_buffer = io.BytesIO()
-                cnt = 0
-                
-                with zipfile.ZipFile(zip_buffer, "w") as zf:
-                    for fname, final_data in st.session_state.processed_data.items():
-                        try:
-                            # Generovanie Wordu z upravených dát
-                            doc_io = generate_word(final_data, "template.docx")
-                            safe_name = final_data.get('personal', {}).get('name', 'Kandidat').replace(' ', '_')
-                            zf.writestr(f"Profil_{safe_name}.docx", doc_io.getvalue())
-                            cnt += 1
-                        except Exception as e:
-                            st.error(f"Chyba pri generovaní {fname}: {e}")
-                
-                if cnt > 0:
-                    st.success(f"Vygenerovaných {cnt} profilov!")
+            if len(results) > 0:
+                if len(uploaded_files) == 1:
                     st.download_button(
-                        label="📦 STIAHNUŤ ZIP BALÍK",
+                        label="📥 Stiahnuť Word (.docx)",
+                        data=results[0]["data"],
+                        file_name=results[0]["name"],
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    )
+                else:
+                    st.success(f"Spracovaných {len(results)} súborov.")
+                    st.download_button(
+                        label="📦 Stiahnuť všetko (ZIP)",
                         data=zip_buffer.getvalue(),
-                        file_name="Areon_Profily_Edited.zip",
+                        file_name="Areon_Profily.zip",
                         mime="application/zip"
                     )
